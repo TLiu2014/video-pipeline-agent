@@ -1,0 +1,8 @@
+# Native postinstall scripts for optional/transitive @google/adk deps. We only
+# use the in-memory ADK runner (no SQLite sessions, GCS artifacts or telemetry
+# exporters), so none of these native modules are loaded at build or runtime.
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false
+  sharp: false
+  sqlite3: false

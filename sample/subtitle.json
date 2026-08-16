@@ -1,0 +1,73 @@
+{
+  "id": "subtitle",
+  "label": "Bilingual Subtitles",
+  "title": "Bilingual Subtitle Burner",
+  "summary": "Extract the audio, transcribe & translate it into English and Chinese with Gemini, then burn both subtitle tracks back into the video with FFmpeg.",
+  "nodes": [
+    {
+      "id": "raw",
+      "type": "resource",
+      "data": { "label": "Source Video", "media": "video", "filename": "raw.mp4" }
+    },
+    {
+      "id": "extract",
+      "type": "operation",
+      "data": {
+        "label": "Audio Extractor",
+        "agent": "Pulls the audio track off the source video",
+        "engine": "ffmpeg",
+        "command": "ffmpeg -i {in} -vn -ac 1 -ar 16000 {out}"
+      }
+    },
+    {
+      "id": "audio",
+      "type": "resource",
+      "data": { "label": "Audio Track", "media": "audio", "filename": "audio.wav" }
+    },
+    {
+      "id": "transcribe",
+      "type": "operation",
+      "data": {
+        "label": "Transcriber & Translator",
+        "agent": "Gemini transcribes speech and translates to EN + ZH",
+        "engine": "gemini"
+      }
+    },
+    {
+      "id": "subs-en",
+      "type": "resource",
+      "data": { "label": "English Subs", "media": "subtitle", "filename": "subs.en.srt" }
+    },
+    {
+      "id": "subs-zh",
+      "type": "resource",
+      "data": { "label": "Chinese Subs", "media": "subtitle", "filename": "subs.zh.srt" }
+    },
+    {
+      "id": "burn",
+      "type": "operation",
+      "data": {
+        "label": "Subtitle Burner",
+        "agent": "Burns both subtitle tracks into the video frame",
+        "engine": "ffmpeg",
+        "command": "ffmpeg -i {in} -vf \"subtitles=subs.en.srt:force_style='Alignment=2',subtitles=subs.zh.srt:force_style='Alignment=8'\" {out}"
+      }
+    },
+    {
+      "id": "final",
+      "type": "resource",
+      "data": { "label": "Subtitled Video", "media": "video", "filename": "subtitled.mp4" }
+    }
+  ],
+  "edges": [
+    { "source": "raw", "target": "extract" },
+    { "source": "extract", "target": "audio" },
+    { "source": "audio", "target": "transcribe" },
+    { "source": "transcribe", "target": "subs-en" },
+    { "source": "transcribe", "target": "subs-zh" },
+    { "source": "raw", "target": "burn" },
+    { "source": "subs-en", "target": "burn" },
+    { "source": "subs-zh", "target": "burn" },
+    { "source": "burn", "target": "final" }
+  ]
+}

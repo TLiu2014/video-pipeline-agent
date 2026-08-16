@@ -1,0 +1,64 @@
+{
+  "id": "reframe",
+  "label": "Vertical Reframe",
+  "title": "Speaker-Tracked Vertical Reframe",
+  "summary": "Analyze a 16:9 master clip to track where the speaker is, then crop and re-frame it to a 9:16 vertical short that keeps them centered.",
+  "nodes": [
+    {
+      "id": "master",
+      "type": "resource",
+      "data": {
+        "label": "16:9 Master Clip",
+        "media": "video",
+        "filename": "master.mp4",
+        "description": "Landscape source at 1920x1080."
+      }
+    },
+    {
+      "id": "track",
+      "type": "operation",
+      "data": {
+        "label": "Speaker Tracker",
+        "agent": "Gemini watches the clip and returns the speaker's bounding box over time",
+        "engine": "gemini"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "resource",
+      "data": {
+        "label": "Crop Plan",
+        "media": "text",
+        "filename": "crop-plan.json",
+        "description": "Per-timestamp crop window that follows the speaker."
+      }
+    },
+    {
+      "id": "reframe",
+      "type": "operation",
+      "data": {
+        "label": "Reframe & Crop",
+        "agent": "Crops the video to a 9:16 window that tracks the speaker",
+        "engine": "ffmpeg",
+        "command": "ffmpeg -i {in} -vf \"crop=ih*9/16:ih,scale=1080:1920\" {out}"
+      }
+    },
+    {
+      "id": "short",
+      "type": "resource",
+      "data": {
+        "label": "9:16 Vertical Short",
+        "media": "video",
+        "filename": "vertical.mp4",
+        "description": "Ready for Reels / Shorts / TikTok at 1080x1920."
+      }
+    }
+  ],
+  "edges": [
+    { "source": "master", "target": "track" },
+    { "source": "track", "target": "plan" },
+    { "source": "master", "target": "reframe" },
+    { "source": "plan", "target": "reframe" },
+    { "source": "reframe", "target": "short" }
+  ]
+}

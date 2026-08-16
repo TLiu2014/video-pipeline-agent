@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#__next {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/* React Flow attribution tuned per theme. */
+.react-flow__attribution {
+  @apply bg-transparent text-slate-400 dark:text-slate-600;
+}
+
+/* React Flow ships light-only control buttons (white fill, black glyphs) that
+   render as a bright block on the dark canvas. Only the wrapper takes a
+   className, so the buttons themselves are themed here. */
+.dark .react-flow__controls-button {
+  @apply border-slate-700 bg-slate-900 text-slate-300;
+  fill: currentColor;
+}
+
+.dark .react-flow__controls-button:hover {
+  @apply bg-slate-800 text-slate-100;
+}
+
+/* Node status pulse — used while an operation is actively running / queued. */
+@keyframes status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--status-glow, rgba(245, 158, 11, 0.5));
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(0, 0, 0, 0);
+  }
+}
+
+.status-pulse {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+/* Flowing edge animation for media moving down the pipeline. */
+.react-flow__edge-path.edge-flowing {
+  stroke-dasharray: 6 4;
+  animation: dash-flow 0.7s linear infinite;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
