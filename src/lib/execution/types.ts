@@ -1,4 +1,13 @@
-import type { OperationEngine } from "@/lib/types";
+import type { MediaKind, OperationEngine } from "@/lib/types";
+
+/** A downstream resource an operation is expected to produce. */
+export interface OpOutput {
+  /** Resource node id. */
+  id: string;
+  /** Output filename (relative to the run working dir). */
+  filename: string;
+  media: MediaKind;
+}
 
 /** A single operation to execute, resolved from an Operation node in the DAG. */
 export interface OperationSpec {
@@ -7,24 +16,32 @@ export interface OperationSpec {
   engine: OperationEngine;
   /** FFmpeg command template with {in} / {in0..n} / {out} placeholders. */
   command?: string;
-  /** Resolved input filenames (relative to the media workspace). */
+  /** Input filenames (relative to the run working dir). */
   inputs: string[];
-  /** Desired output filename (relative to the media workspace). */
-  output: string;
+  /** Downstream resource(s) this op produces. */
+  outputs: OpOutput[];
+}
+
+/** A produced artifact, keyed back to its resource node. */
+export interface ProducedArtifact {
+  /** Resource node id. */
+  id: string;
+  filename: string;
+  /** Served URL for preview (e.g. /renders/subtitled.mp4). */
+  url: string;
 }
 
 export interface OperationResult {
+  /** Operation node id. */
   id: string;
   ok: boolean;
-  /** Filesystem path (local) of the produced artifact, if any. */
-  outputPath?: string;
-  /** Public URL for previewing the artifact in the browser, if served. */
-  outputUrl?: string;
+  /** True when the op was intentionally not executed (e.g. tts stub). */
+  skipped?: boolean;
   /** Combined stdout/stderr or remote logs. */
   logs: string;
   error?: string;
-  /** True when the op was intentionally not executed (e.g. gemini/tts stub). */
-  skipped?: boolean;
+  /** Artifacts produced, mapped to their downstream resource nodes. */
+  produced: ProducedArtifact[];
 }
 
 export type ExecutionMode = "local" | "replit";

@@ -8,6 +8,7 @@ import {
   MiniMap,
   ReactFlow,
   useNodesState,
+  useReactFlow,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -18,7 +19,6 @@ import { STATUS_STYLES } from "./nodeStyles";
 import { nodeTypes } from "./VideoNode";
 import { STATUS_ORDER } from "@/lib/dag";
 import { PipelineNodeContext } from "./PipelineNodeContext";
-import { NodeDetailsDrawer } from "./NodeDetailsDrawer";
 import { RoutedEdge } from "./RoutedEdge";
 
 const edgeTypes = { routed: RoutedEdge };
@@ -30,6 +30,27 @@ interface Props {
   animateEdges?: boolean;
   /** Changing this value refits the view (used for "auto-fit on generate"). */
   refitKey?: number;
+  /** Open a resource node's produced artifact in the results view. */
+  onPreview?: (nodeId: string) => void;
+  /** Node id to pan/zoom to (the in-progress stage during a run). */
+  activeNodeId?: string | null;
+}
+
+/** Pans/zooms the viewport to follow the in-progress node during a run. */
+function ViewFocuser({ activeNodeId }: { activeNodeId?: string | null }) {
+  const rf = useReactFlow();
+  useEffect(() => {
+    if (!activeNodeId) return;
+    const node = rf.getNode(activeNodeId);
+    if (!node) return;
+    const w = node.measured?.width ?? 240;
+    const h = node.measured?.height ?? 120;
+    rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+      zoom: 1,
+      duration: 450,
+    });
+  }, [activeNodeId, rf]);
+  return null;
 }
 
 /** Read-only React Flow canvas rendering the generated video pipeline. */
@@ -38,6 +59,8 @@ export function PipelineCanvas({
   edges,
   animateEdges = true,
   refitKey = 0,
+  onPreview,
+  activeNodeId,
 }: Props) {
   const { theme } = useTheme();
   const dark = theme === "dark";
@@ -51,14 +74,13 @@ export function PipelineCanvas({
     setRfNodes(nodes as unknown as Node[]);
   }, [nodes, setRfNodes]);
 
-  // Node-details inspector, opened from a node's eye button (or double-click).
+  // Single open details popover, controlled here so an outside click (pane or
+  // another node) can dismiss it. Eye button / double-click toggle it.
   const [detailsId, setDetailsId] = useState<string | null>(null);
-  const onShowDetails = useCallback((id: string) => setDetailsId(id), []);
-  const detailsData = useMemo(
-    () => nodes.find((n) => n.id === detailsId)?.data ?? null,
-    [nodes, detailsId],
+  const onToggleDetails = useCallback(
+    (id: string) => setDetailsId((cur) => (cur === id ? null : id)),
+    [],
   );
-  // Drop the inspector if its node disappears (e.g. switching samples).
   useEffect(() => {
     if (detailsId && !nodes.some((n) => n.id === detailsId)) setDetailsId(null);
   }, [nodes, detailsId]);
@@ -88,14 +110,20 @@ export function PipelineCanvas({
   const isEmpty = nodes.length === 0;
 
   return (
-    <PipelineNodeContext.Provider value={{ onShowDetails }}>
+    <PipelineNodeContext.Provider
+      value={{ onPreview, detailsId, onToggleDetails }}
+    >
     <div className="relative h-full w-full">
       <ReactFlow
         key={refitKey}
         nodes={rfNodes}
         edges={rfEdges}
         onNodesChange={onNodesChange}
-        onNodeDoubleClick={(_, n) => setDetailsId(n.id)}
+        onNodeClick={(_, n) => {
+          setDetailsId(null); // close any open popover when selecting a node
+          if (n.type === "resource") onPreview?.(n.id);
+        }}
+        onPaneClick={() => setDetailsId(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
@@ -126,16 +154,11 @@ export function PipelineCanvas({
           }
           maskColor={dark ? "rgba(2,6,23,0.6)" : "rgba(241,245,249,0.6)"}
         />
+        <ViewFocuser activeNodeId={activeNodeId} />
       </ReactFlow>
 
       {isEmpty && <EmptyState />}
       {!isEmpty && <Legend />}
-      {detailsData && (
-        <NodeDetailsDrawer
-          data={detailsData}
-          onClose={() => setDetailsId(null)}
-        />
-      )}
     </div>
     </PipelineNodeContext.Provider>
   );

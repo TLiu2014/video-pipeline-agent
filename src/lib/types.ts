@@ -32,6 +32,8 @@ export interface ResourceNodeData extends Record<string, unknown> {
   status: NodeStatus;
   /** Public URL of the produced artifact once the upstream op has run. */
   outputUrl?: string | null;
+  /** True for a root resource: the pipeline's input source video. */
+  isSource?: boolean;
 }
 
 /** Data carried by an Operation (ADK agent) node. */
@@ -46,7 +48,10 @@ export interface OperationNodeData extends Record<string, unknown> {
   command?: string;
   description?: string;
   status: NodeStatus;
+  /** Hard failure message (shown red). */
   error?: string | null;
+  /** Informational skip reason (shown amber), e.g. "no GOOGLE_API_KEY". */
+  note?: string | null;
 }
 
 export type PipelineNodeData = ResourceNodeData | OperationNodeData;
@@ -91,6 +96,18 @@ export interface GeneratedDag {
     data: Record<string, unknown>;
   }>;
   edges: Array<{ id?: string; source: string; target: string; label?: string }>;
+}
+
+/** A video source loaded onto the canvas (sample clip, fetched link, or upload). */
+export interface LoadedSource {
+  /** How it got here. */
+  kind: "sample" | "link" | "upload";
+  /** Served URL for preview, e.g. "/samples/blazes.mp4" or "/media/abc.mp4". */
+  url: string;
+  /** Display name. */
+  name: string;
+  /** Size in bytes, when known. */
+  size?: number;
 }
 
 export interface GenerateDagResponse {

@@ -13,9 +13,11 @@ next-env.d.ts
 .envrc
 .npmrc
 
-# media workspace — uploaded sources + rendered pipeline outputs
+# media workspace — staged sources (/public/media) + pipeline run outputs
+# (/public/renders). Both hold heavy generated/loaded files; keep them untracked.
 /media/
 /public/media/
+/public/renders/
 *.mp4
 *.mov
 *.mkv
@@ -24,6 +26,8 @@ next-env.d.ts
 *.wav
 *.srt
 *.vtt
+# ...but DO allow the bundled sample clips + folder scaffolding to be committed.
+!/public/samples/
 !/public/samples/**
 
 # misc

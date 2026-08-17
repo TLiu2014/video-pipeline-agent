@@ -101,6 +101,8 @@ export function hydrateDag(dag: GeneratedDag): {
     dag.nodes.map((n) => ({ id: n.id, type: n.type })),
     dag.edges,
   );
+  // Root resources (no incoming edge) are the pipeline's source video input.
+  const hasIncoming = new Set(dag.edges.map((e) => e.target));
 
   const nodes: PipelineFlowNode[] = dag.nodes.map((n) => {
     const position = pos[n.id] ?? { x: 0, y: 0 };
@@ -114,6 +116,7 @@ export function hydrateDag(dag: GeneratedDag): {
         description: d.description ? String(d.description) : undefined,
         status: "idle",
         outputUrl: null,
+        isSource: !hasIncoming.has(n.id),
       };
       return { id: n.id, type: "resource", position, data };
     }

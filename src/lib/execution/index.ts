@@ -7,6 +7,8 @@ export type {
   ExecutorService,
   OperationResult,
   OperationSpec,
+  OpOutput,
+  ProducedArtifact,
 } from "./types";
 export { LocalFfmpegRunner } from "./LocalFfmpegRunner";
 export { ReplitCloudRunner } from "./ReplitCloudRunner";

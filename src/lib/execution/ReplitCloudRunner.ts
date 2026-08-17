@@ -34,6 +34,7 @@ export class ReplitCloudRunner implements ExecutorService {
       id: spec.id,
       ok: false,
       error: "Replit runner not configured",
+      produced: [],
       logs:
         `[replit] Would run "${spec.label}" on a cloud workspace.\n` +
         `Set REPLIT_API_TOKEN (and optionally REPLIT_WORKSPACE_ID) to enable.` +
@@ -78,12 +79,13 @@ export class ReplitCloudRunner implements ExecutorService {
         workspaceId,
         `bash scripts/${spec.id}.sh`,
       );
-      // TODO: download the produced artifact and host it (e.g. signed URL).
+      // TODO: download the produced artifacts and host them (e.g. signed URLs).
       return {
         id: spec.id,
         ok: exitCode === 0,
         logs: `${stdout}\n${stderr}`.trim(),
         error: exitCode === 0 ? undefined : `exited with code ${exitCode}`,
+        produced: [],
       };
     } catch (err) {
       return this.notConfigured(

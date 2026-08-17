@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { PROMPT_TEMPLATES } from "@/lib/templates";
 import { cn } from "@/lib/utils";
+import { SourceLoader } from "./SourceLoader";
+import type { LoadedSource } from "@/lib/types";
 
 export type TraceKind = "user" | "assistant" | "trace";
 export type TraceStatus = "doing" | "done" | "failed";
@@ -38,6 +40,11 @@ interface SidePanelProps {
   executionMode: string;
   /** Whether the canvas currently has a runnable pipeline. */
   canRun: boolean;
+  source: LoadedSource | null;
+  onSourceLoaded: (s: LoadedSource) => void;
+  maxUploadMb: number;
+  /** Show the source-loader controls (toggle in settings). */
+  showSourceLoader: boolean;
 }
 
 /**
@@ -56,6 +63,10 @@ export function SidePanel({
   entries,
   executionMode,
   canRun,
+  source,
+  onSourceLoaded,
+  maxUploadMb,
+  showSourceLoader,
 }: SidePanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +105,20 @@ export function SidePanel({
           </button>
         )}
       </header>
+
+      {/* Source loader (toggle in settings) */}
+      {showSourceLoader && (
+        <div className="shrink-0 border-b border-slate-200 p-3 dark:border-slate-800">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Source video
+          </div>
+          <SourceLoader
+            current={source}
+            onLoaded={onSourceLoaded}
+            maxMb={maxUploadMb}
+          />
+        </div>
+      )}
 
       {/* Run control */}
       <div className="shrink-0 border-b border-slate-200 p-3 dark:border-slate-800">

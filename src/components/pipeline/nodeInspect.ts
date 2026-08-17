@@ -15,5 +15,5 @@ export function hasExtraDetails(data: PipelineNodeData): boolean {
     return Boolean(d.description || d.outputUrl);
   }
   const d = data as OperationNodeData;
-  return Boolean(d.command || d.agent || d.description || d.error);
+  return Boolean(d.command || d.agent || d.description || d.error || d.note);
 }

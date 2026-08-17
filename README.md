@@ -55,9 +55,11 @@ FFmpeg must be on your `PATH` (or set `FFMPEG_PATH`) for local execution.
 | -------------------------- | ------------------ | --------------------------------------------------- |
 | `GOOGLE_API_KEY`           | —                  | Gemini key used by the ADK (`GEMINI_API_KEY` works) |
 | `GOOGLE_GENAI_USE_VERTEXAI`| `false`            | Use the AI Studio Developer API, not Vertex         |
-| `GEMINI_MODEL`             | `gemini-2.5-flash` | Model backing the DAG-builder agent                 |
+| `GEMINI_MODEL`             | `gemini-3.5-flash` | Model backing the DAG-builder agent                 |
 | `EXECUTION_MODE`           | `local`            | `local` (FFmpeg here) or `replit` (cloud)           |
-| `MEDIA_DIR`                | `./public/media`   | Where source media / rendered outputs live          |
+| `MEDIA_DIR`                | `./public/media`   | Staged sources (paste-link + uploads)               |
+| `RENDERS_DIR`              | `./public/renders` | Per-run working dir + generated outputs             |
+| `MAX_UPLOAD_MB`            | `100`              | Cap for pasted-link fetches + uploads               |
 | `FFMPEG_PATH`              | `ffmpeg`           | FFmpeg binary path                                  |
 | `REPLIT_API_TOKEN`         | —                  | Required only when `EXECUTION_MODE=replit`          |
 
@@ -65,25 +67,52 @@ FFmpeg must be on your `PATH` (or set `FFMPEG_PATH`) for local execution.
 
 ```
 sample/                            # demo pipeline flows as JSON (subtitle, reframe)
+public/samples/                    # bundled source clips (drop your own .mp4s here)
 src/
   app/
     page.tsx                       # server shell → <Builder>
     api/generate-dag/route.ts      # ADK + Gemini → Resource/Operation JSON (+ fallback)
-    api/execute/route.ts           # topo-sorts the DAG → runs via ExecutorService
+    api/execute/route.ts           # copy source → topo-sort → run via ExecutorService
+    api/sources/route.ts           # list sample clips + staged sources
+    api/fetch-video/route.ts       # Tier 2: server-side fetch a pasted URL (capped)
+    api/upload-video/route.ts      # Tier 3: upload a file (capped)
+    api/subtitle/route.ts          # read/save a subtitle file
+    api/file/[...path]/route.ts    # stream media from /public (Range-aware)
   components/
     theme/                         # ThemeProvider + toggle (ported)
     pipeline/
-      Header.tsx                   # prompt bar + template chips + settings + theme
-      SettingsMenu.tsx             # gear dropdown (appearance / engine / about)
-      Builder.tsx                  # client state: generate + run + status
-      PipelineCanvas.tsx           # React Flow canvas + legend
-      VideoNode.tsx                # Resource + Operation node renderers
+      Header.tsx                   # slim top bar: brand + settings + theme
+      SidePanel.tsx                # source loader + Run + agent-step trace + composer
+      SourceLoader.tsx             # sample / paste-link / upload
+      SettingsMenu.tsx             # appearance / results layout / sample / engine
+      Builder.tsx                  # client state + resizable split layout
+      PipelineCanvas.tsx           # React Flow canvas + routed edges + legend
+      VideoNode.tsx                # Resource + Operation node renderers (eye + preview)
+      ResultsPanel.tsx             # video player + subtitle editor (tabbed)
+      SubtitleEditor.tsx           # edit + save .srt
+  hooks/useDragResize.ts           # pointer-driven pane resizing
   lib/
-    agent/                         # ADK LlmAgent + system prompt (DAG builder)
+    agent/                         # ADK LlmAgent: DAG builder + audio transcription
     execution/                     # ExecutorService: LocalFfmpegRunner + ReplitCloudRunner
+    media.ts                       # media dirs, size cap, /api/file URL helpers
     dag.ts                         # dagre layout, hydration, loads /sample/*.json
     types.ts                       # shared Resource/Operation contract
 ```
+
+## Load a video + preview results
+
+- **Load** a source three ways (left panel → *Source video*): a bundled **sample**
+  clip from `/public/samples`, a **pasted URL** (fetched server-side, never through
+  the browser), or an **upload**. Links/uploads are capped by `MAX_UPLOAD_MB`.
+- **Run** the pipeline. FFmpeg steps execute for real; the Gemini transcriber
+  produces real `.srt` subtitles (needs `GOOGLE_API_KEY`); TTS/dub is still stubbed.
+- **Preview**: click a resource node's *Preview* / *View · edit* to open the
+  **Results** pane — a video player for video nodes, an editable subtitle view for
+  subtitle nodes. Dock it Right / Bottom / Off in Settings; drag the dividers
+  (side-panel ↔ canvas ↔ results) to resize.
+- Generated files live in `/public/renders` (gitignored) and are served via
+  `/api/file/*` — necessary because `next start` doesn't serve files created after
+  boot.
 
 ## The execution abstraction
 

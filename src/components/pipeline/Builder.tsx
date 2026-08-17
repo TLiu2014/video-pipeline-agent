@@ -5,7 +5,10 @@ import { Sparkles } from "lucide-react";
 import { Header } from "./Header";
 import { PipelineCanvas } from "./PipelineCanvas";
 import { SidePanel, type TraceEntry, type TraceStatus } from "./SidePanel";
+import { ResultsPanel, type PreviewItem } from "./ResultsPanel";
 import type { AppSettings } from "./SettingsMenu";
+import { useDragResize } from "@/hooks/useDragResize";
+import { cn } from "@/lib/utils";
 import {
   DEFAULT_SAMPLE_ID,
   hydrateDag,
@@ -15,6 +18,7 @@ import {
 import type {
   GeneratedDag,
   GenerateDagResponse,
+  LoadedSource,
   NodeStatus,
   PipelineEdge,
   PipelineFlowNode,
@@ -23,17 +27,44 @@ import type {
 interface BuilderProps {
   executionMode: string;
   model: string;
+  maxUploadMb: number;
 }
 
-interface ExecResult {
+/** An operation's result carried by the `op-done` stream event. */
+interface OpEvent {
+  type?: "op-done";
   id: string;
   ok: boolean;
-  error?: string;
-  outputUrl?: string;
   skipped?: boolean;
+  error?: string;
+  logs?: string;
+  produced?: Array<{ id: string; filename: string; url: string }>;
 }
 
-export function Builder({ executionMode, model }: BuilderProps) {
+type StreamEvent =
+  | { type: "start"; mode: string; count: number }
+  | { type: "op-start"; id: string; label: string }
+  | ({ type: "op-done" } & OpEvent)
+  | { type: "error"; error: string }
+  | { type: "done"; mode: string };
+
+/** Keep the last few lines of a log for the trace detail. */
+function tailLog(logs?: string): string | undefined {
+  if (!logs) return undefined;
+  const lines = logs.trim().split("\n");
+  return lines.slice(-6).join("\n");
+}
+
+/** After a run, focus the artifact produced by the last executed op. */
+function lastFocusId(
+  lastOpId: string | null,
+  edges: PipelineEdge[],
+): string | null {
+  if (!lastOpId) return null;
+  return edges.find((e) => e.source === lastOpId)?.target ?? lastOpId;
+}
+
+export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
   const initialDag = sampleById(DEFAULT_SAMPLE_ID);
   const initial = useMemo(() => hydrateDag(initialDag), [initialDag]);
   const [prompt, setPrompt] = useState("");
@@ -45,9 +76,33 @@ export function Builder({ executionMode, model }: BuilderProps) {
   const [refitKey, setRefitKey] = useState(0);
   const [sample, setSample] = useState<SampleId>(DEFAULT_SAMPLE_ID);
   const [entries, setEntries] = useState<TraceEntry[]>([]);
+  const [source, setSource] = useState<LoadedSource | null>(null);
+  const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>({
     animateEdges: true,
     autoFit: true,
+    resultsLayout: "hidden",
+    followActive: true,
+    showSourceLoader: true,
+  });
+
+  // Resizable dividers: side panel width, and the results pane size. The results
+  // divider's axis + drag direction depend on where the pane is docked.
+  const sidePanel = useDragResize({
+    axis: "x",
+    initial: 340,
+    min: 280,
+    max: 560,
+  });
+  const resultsPane = useDragResize({
+    axis: settings.resultsLayout === "right" ? "x" : "y",
+    initial: 360,
+    min: 200,
+    max: 760,
+    // A pane docked right/bottom grows as you drag toward it (inverted); a
+    // top-docked pane grows as you drag down (not inverted).
+    invert: settings.resultsLayout !== "top",
   });
 
   const idRef = useRef(0);
@@ -73,12 +128,13 @@ export function Builder({ executionMode, model }: BuilderProps) {
   const applyDag = useCallback(
     (next: GeneratedDag) => {
       const { nodes: n, edges: e } = hydrateDag(next);
+      // Keep any already-loaded source bound to the new pipeline's roots.
       setDag(next);
-      setNodes(n);
+      setNodes(source ? bindSourceToRoots(n, e, source) : n);
       setEdges(e);
       if (settings.autoFit) setRefitKey((k) => k + 1);
     },
-    [settings.autoFit],
+    [settings.autoFit, source],
   );
 
   // Switch the canvas to a sample pipeline (or empty) from the settings menu.
@@ -90,6 +146,39 @@ export function Builder({ executionMode, model }: BuilderProps) {
     },
     [applyDag],
   );
+
+  // A source video was chosen (sample / link / upload): bind it to the root
+  // resource node(s) so it previews immediately and feeds the run. No trace
+  // entry — picking a source clip isn't an agent step.
+  const onSourceLoaded = useCallback(
+    (s: LoadedSource) => {
+      if (source?.url === s.url) return; // already the source → no-op
+      setSource(s);
+      setNodes((prev) => bindSourceToRoots(prev, edges, s));
+    },
+    [edges, source],
+  );
+
+  // Un-use the source (uncheck a clip): reset the root resource node(s) to their
+  // "no video loaded" placeholder.
+  const onClearSource = useCallback(() => {
+    setSource(null);
+    setNodes((prev) => {
+      const hasIncoming = new Set(edges.map((e) => e.target));
+      return prev.map((n) =>
+        n.type === "resource" && !hasIncoming.has(n.id)
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                outputUrl: null,
+                status: "idle" as NodeStatus,
+              },
+            }
+          : n,
+      );
+    });
+  }, [edges]);
 
   const generate = useCallback(async () => {
     const text = prompt.trim();
@@ -132,112 +221,231 @@ export function Builder({ executionMode, model }: BuilderProps) {
     }
   }, [prompt, loading, push, applyDag]);
 
-  const run = useCallback(async () => {
-    if (running || nodes.length === 0) return;
-    setRunning(true);
-    // Optimistically queue every operation node + open a trace row.
-    setNodes((prev) =>
-      prev.map((n) =>
-        n.type === "operation"
-          ? { ...n, data: { ...n.data, status: "queued" as NodeStatus } }
-          : n,
-      ),
-    );
-    const runningId = push({
-      kind: "trace",
-      status: "doing",
-      text: `Executing pipeline on ${
-        executionMode === "replit" ? "Replit Cloud" : "Local FFmpeg"
-      }…`,
-    });
-    try {
-      const res = await fetch("/api/execute", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ dag }),
-      });
-      const data: { mode: string; results: ExecResult[] } = await res.json();
-      const results = data.results ?? [];
-      applyResults(results);
-
-      const labelOf = new Map(nodes.map((n) => [n.id, n.data.label]));
-      const failed = results.filter((r) => !r.ok && !r.skipped);
-      update(runningId, {
-        status: failed.length ? "failed" : "done",
-        text: failed.length
-          ? `Ran on ${data.mode} — ${failed.length} failed`
-          : `Ran on ${data.mode} — all steps done`,
-      });
-      for (const r of results) {
-        const status: TraceStatus = r.skipped
-          ? "done"
-          : r.ok
-            ? "done"
-            : "failed";
-        push({
-          kind: "trace",
-          status,
-          text: `${labelOf.get(r.id) ?? r.id}${r.skipped ? " (skipped)" : ""}`,
-          detail: r.ok ? r.outputUrl ?? undefined : r.error ?? undefined,
-        });
-      }
-    } catch (err) {
-      update(runningId, {
-        status: "failed",
-        text: `Execution failed: ${
-          err instanceof Error ? err.message : "unknown"
-        }`,
-      });
-    } finally {
-      setRunning(false);
-    }
-  }, [running, nodes, dag, executionMode, push, update]);
-
-  /** Fold execution results back into node statuses. */
-  const applyResults = useCallback(
-    (results: ExecResult[]) => {
-      const byId = new Map(results.map((r) => [r.id, r]));
-      const feeders = new Map<string, string[]>();
-      const opIds = new Set(
-        nodes.filter((n) => n.type === "operation").map((n) => n.id),
-      );
-      for (const e of edges) {
-        if (opIds.has(e.source)) {
-          const arr = feeders.get(e.target) ?? [];
-          arr.push(e.source);
-          feeders.set(e.target, arr);
-        }
-      }
+  /** Fold a single op's result into its node + downstream resource nodes. */
+  const applyOpResult = useCallback(
+    (r: OpEvent) => {
+      const producedUrl = new Map((r.produced ?? []).map((p) => [p.id, p.url]));
+      const downstream = edges
+        .filter((e) => e.source === r.id)
+        .map((e) => e.target);
       setNodes((prev) =>
         prev.map((n) => {
-          if (n.type === "operation") {
-            const r = byId.get(n.id);
-            const status: NodeStatus = !r
+          if (n.id === r.id && n.type === "operation") {
+            // Skipped (e.g. no key, or inputs not produced) stays "idle" — it
+            // never ran; only a real success is "done" and a hard error "failed".
+            // A skip surfaces its reason as an amber note, not a red error.
+            const status: NodeStatus = r.skipped
               ? "idle"
-              : r.ok || r.skipped
+              : r.ok
                 ? "done"
                 : "failed";
             return {
               ...n,
-              data: { ...n.data, status, error: r?.ok ? null : r?.error ?? null },
+              data: {
+                ...n.data,
+                status,
+                error: !r.ok && !r.skipped ? r.error ?? null : null,
+                note: r.skipped ? r.error ?? "skipped" : null,
+              },
             };
           }
-          const ops = feeders.get(n.id) ?? [];
-          let status: NodeStatus = "done";
-          let outputUrl = n.data.outputUrl ?? null;
-          if (ops.length) {
-            const rs = ops.map((id) => byId.get(id));
-            if (rs.some((r) => r && !r.ok && !r.skipped)) status = "failed";
-            else if (rs.some((r) => !r)) status = "idle";
-            else status = "done";
-            const produced = rs.find((r) => r?.outputUrl)?.outputUrl;
-            if (produced) outputUrl = produced;
+          if (n.type === "resource" && downstream.includes(n.id)) {
+            if (producedUrl.has(n.id))
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  status: "done" as NodeStatus,
+                  outputUrl: producedUrl.get(n.id)!,
+                },
+              };
+            if (!r.ok && !r.skipped)
+              return { ...n, data: { ...n.data, status: "failed" as NodeStatus } };
           }
-          return { ...n, data: { ...n.data, status, outputUrl } };
+          return n;
         }),
       );
     },
-    [nodes, edges],
+    [edges],
+  );
+
+  const run = useCallback(async () => {
+    if (running || nodes.length === 0) return;
+    setRunning(true);
+    // Reset operations to queued; clear prior errors.
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.type === "operation"
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                status: "queued" as NodeStatus,
+                error: null,
+                note: null,
+              },
+            }
+          : n,
+      ),
+    );
+    const labelOf = new Map(nodes.map((n) => [n.id, n.data.label]));
+    const traceByOp = new Map<string, string>();
+    let failed = 0;
+    let skipped = 0;
+    let lastOpId: string | null = null;
+    let mode = executionMode;
+    try {
+      // Send the LIVE nodes (with the loaded source's real filename), not the
+      // static sample DAG — so execution reads/writes the actual filenames.
+      const liveDag = {
+        title: dag.title,
+        summary: dag.summary,
+        nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+        edges: edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          label: e.label,
+        })),
+      };
+      const res = await fetch("/api/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dag: liveDag, sourceUrl: source?.url ?? null }),
+      });
+      if (!res.body) throw new Error("no response stream");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev: StreamEvent;
+          try {
+            ev = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (ev.type === "start") {
+            mode = ev.mode;
+          } else if (ev.type === "op-start") {
+            if (settings.followActive) setActiveNodeId(ev.id);
+            setNodes((prev) =>
+              prev.map((n) =>
+                n.id === ev.id && n.type === "operation"
+                  ? { ...n, data: { ...n.data, status: "running" as NodeStatus } }
+                  : n,
+              ),
+            );
+            const tid = push({
+              kind: "trace",
+              status: "doing",
+              text: `${ev.label}…`,
+            });
+            traceByOp.set(ev.id, tid);
+          } else if (ev.type === "op-done") {
+            if (ev.skipped) skipped++;
+            else if (!ev.ok) failed++;
+            lastOpId = ev.id;
+            applyOpResult(ev);
+            const tid = traceByOp.get(ev.id);
+            const status: TraceStatus = ev.ok || ev.skipped ? "done" : "failed";
+            const detail = ev.ok
+              ? ev.produced?.[0]?.url ?? tailLog(ev.logs)
+              : ev.error ?? tailLog(ev.logs);
+            const patch = {
+              status,
+              text: `${labelOf.get(ev.id) ?? ev.id}${ev.skipped ? " (skipped)" : ""}`,
+              detail,
+            };
+            if (tid) update(tid, patch);
+            else push({ kind: "trace", ...patch });
+          } else if (ev.type === "error") {
+            push({ kind: "trace", status: "failed", text: `Error: ${ev.error}` });
+          }
+        }
+      }
+      push({
+        kind: "assistant",
+        text: failed
+          ? `Ran on ${mode} — ${failed} step(s) failed. See node details.`
+          : skipped
+            ? `Ran on ${mode} — ${skipped} step(s) skipped (add GOOGLE_API_KEY for transcription).`
+            : `Ran on ${mode} — all steps done.`,
+      });
+      // Leave the viewport on the last touched stage (readable) rather than
+      // shrinking back to the whole pipeline.
+      if (settings.followActive)
+        setActiveNodeId(lastFocusId(lastOpId, edges) ?? null);
+    } catch (err) {
+      push({
+        kind: "trace",
+        status: "failed",
+        text: `Execution failed: ${err instanceof Error ? err.message : "unknown"}`,
+      });
+      setActiveNodeId(null);
+    } finally {
+      setRunning(false);
+    }
+  }, [
+    running,
+    nodes,
+    dag,
+    source,
+    edges,
+    executionMode,
+    push,
+    update,
+    applyOpResult,
+    settings.followActive,
+  ]);
+
+  // Every resource node is previewable as a tab; the artifact URL may be absent
+  // (blank tab) until the pipeline produces it.
+  const previewItems = useMemo<PreviewItem[]>(() => {
+    const items: PreviewItem[] = [];
+    for (const n of nodes) {
+      if (n.type === "resource") {
+        items.push({
+          id: n.id,
+          label: n.data.label,
+          media: n.data.media,
+          url: n.data.outputUrl ?? null,
+        });
+      }
+    }
+    return items;
+  }, [nodes]);
+
+  // Open a resource's tab; reveal the results pane (docked bottom) if hidden.
+  const onPreview = useCallback((id: string) => {
+    setPreviewNodeId(id);
+    setSettings((s) =>
+      s.resultsLayout === "hidden" ? { ...s, resultsLayout: "bottom" } : s,
+    );
+  }, []);
+
+  const layout = settings.resultsLayout;
+  const showResults = layout !== "hidden";
+
+  const resultsPanel = (
+    <ResultsPanel
+      items={previewItems}
+      activeId={previewNodeId}
+      onSelect={setPreviewNodeId}
+      onClose={() => onSettingsChange({ resultsLayout: "hidden" })}
+      layout={layout}
+      onLayoutChange={(l) => onSettingsChange({ resultsLayout: l })}
+      source={source}
+      onSourceLoaded={onSourceLoaded}
+      onClearSource={onClearSource}
+      maxUploadMb={maxUploadMb}
+    />
   );
 
   return (
@@ -252,7 +460,7 @@ export function Builder({ executionMode, model }: BuilderProps) {
       />
 
       <div className="flex min-h-0 flex-1">
-        <div className="w-[340px] shrink-0">
+        <div style={{ width: sidePanel.size }} className="min-h-0 shrink-0">
           <SidePanel
             prompt={prompt}
             onPromptChange={setPrompt}
@@ -264,38 +472,134 @@ export function Builder({ executionMode, model }: BuilderProps) {
             entries={entries}
             executionMode={executionMode}
             canRun={nodes.length > 0}
+            source={source}
+            onSourceLoaded={onSourceLoaded}
+            maxUploadMb={maxUploadMb}
+            showSourceLoader={settings.showSourceLoader}
           />
         </div>
 
-        <main className="relative min-h-0 flex-1">
-          <PipelineCanvas
-            nodes={nodes}
-            edges={edges}
-            animateEdges={settings.animateEdges}
-            refitKey={refitKey}
-          />
+        <Divider axis="x" onPointerDown={sidePanel.onPointerDown} />
 
-          {nodes.length > 0 && (
-            <div className="pointer-events-none absolute left-4 top-4 z-10 max-w-sm">
-              <div className="pointer-events-auto rounded-xl border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/90">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {dag.title}
+        {/* Canvas + results split (results dock: top / right / bottom) */}
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1",
+            layout === "right" ? "flex-row" : "flex-col",
+          )}
+        >
+          {showResults && layout === "top" && (
+            <>
+              <div
+                style={{ height: resultsPane.size }}
+                className="min-h-0 min-w-0 shrink-0"
+              >
+                {resultsPanel}
+              </div>
+              <Divider axis="y" onPointerDown={resultsPane.onPointerDown} />
+            </>
+          )}
+
+          <main className="relative min-h-0 min-w-0 flex-1">
+            <PipelineCanvas
+              nodes={nodes}
+              edges={edges}
+              animateEdges={settings.animateEdges}
+              refitKey={refitKey}
+              onPreview={onPreview}
+              activeNodeId={activeNodeId}
+            />
+
+            {nodes.length > 0 && (
+              <div className="pointer-events-none absolute left-4 top-4 z-10 max-w-sm">
+                <div className="pointer-events-auto rounded-xl border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/90">
+                  <div className="flex items-start gap-2">
+                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {dag.title}
+                      </div>
+                      {dag.summary && (
+                        <p className="mt-0.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
+                          {dag.summary}
+                        </p>
+                      )}
                     </div>
-                    {dag.summary && (
-                      <p className="mt-0.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
-                        {dag.summary}
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
-            </div>
+            )}
+          </main>
+
+          {showResults && layout !== "top" && (
+            <>
+              <Divider
+                axis={layout === "right" ? "x" : "y"}
+                onPointerDown={resultsPane.onPointerDown}
+              />
+              <div
+                style={
+                  layout === "right"
+                    ? { width: resultsPane.size }
+                    : { height: resultsPane.size }
+                }
+                className="min-h-0 min-w-0 shrink-0"
+              >
+                {resultsPanel}
+              </div>
+            </>
           )}
-        </main>
+        </div>
       </div>
     </div>
+  );
+}
+
+/** Thin draggable divider between panes. */
+function Divider({
+  axis,
+  onPointerDown,
+}: {
+  axis: "x" | "y";
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className={cn(
+        "shrink-0 bg-slate-200 transition-colors hover:bg-indigo-400 dark:bg-slate-800 dark:hover:bg-indigo-500",
+        axis === "x" ? "w-1 cursor-col-resize" : "h-1 cursor-row-resize",
+      )}
+    />
+  );
+}
+
+/**
+ * Point the pipeline's root resource node(s) — those with no incoming edge — at
+ * a freshly loaded source video so it previews immediately and feeds the run.
+ */
+function bindSourceToRoots(
+  nodes: PipelineFlowNode[],
+  edges: PipelineEdge[],
+  source: LoadedSource,
+): PipelineFlowNode[] {
+  const hasIncoming = new Set(edges.map((e) => e.target));
+  // The on-disk filename is the URL basename (samples expose a display label as
+  // `name`, so we can't use that); this is what execution copies + reads.
+  const filename = decodeURIComponent(
+    source.url.split("/").pop() || source.name,
+  );
+  return nodes.map((n) =>
+    n.type === "resource" && !hasIncoming.has(n.id)
+      ? {
+          ...n,
+          data: {
+            ...n.data,
+            filename,
+            outputUrl: source.url,
+            status: "done" as NodeStatus,
+          },
+        }
+      : n,
   );
 }

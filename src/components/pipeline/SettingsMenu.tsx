@@ -11,17 +11,29 @@ import {
   Moon,
   Github,
   Check,
+  PanelRight,
+  PanelBottom,
+  PanelTop,
+  PanelBottomClose,
 } from "lucide-react";
 import { useTheme, type Theme } from "@/components/theme/ThemeProvider";
 import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/utils";
 import { SAMPLES, type SampleId } from "@/lib/dag";
 
+export type ResultsLayout = "hidden" | "top" | "right" | "bottom";
+
 export interface AppSettings {
   /** Animate media flowing along edges. */
   animateEdges: boolean;
   /** Auto-fit the view whenever a new pipeline is generated. */
   autoFit: boolean;
+  /** Where the results/preview pane docks relative to the canvas. */
+  resultsLayout: ResultsLayout;
+  /** Pan/zoom to follow the in-progress node during a run. */
+  followActive: boolean;
+  /** Show the source-loader controls in the left side panel. */
+  showSourceLoader: boolean;
 }
 
 interface SettingsMenuProps {
@@ -157,6 +169,47 @@ export function SettingsMenu({
               label="Auto-fit on generate"
               checked={settings.autoFit}
               onChange={(v) => onChange({ autoFit: v })}
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                Results view
+              </span>
+              <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+                {(
+                  [
+                    ["hidden", "Off", PanelBottomClose],
+                    ["top", "Top", PanelTop],
+                    ["right", "Right", PanelRight],
+                    ["bottom", "Bottom", PanelBottom],
+                  ] as [ResultsLayout, string, typeof PanelRight][]
+                ).map(([v, label, Icon]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => onChange({ resultsLayout: v })}
+                    aria-pressed={settings.resultsLayout === v}
+                    title={`Results ${label}`}
+                    className={cn(
+                      "inline-flex items-center justify-center rounded-md p-1.5 transition-colors",
+                      settings.resultsLayout === v
+                        ? "bg-indigo-500 text-white"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100",
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ToggleRow
+              label="Follow active node"
+              checked={settings.followActive}
+              onChange={(v) => onChange({ followActive: v })}
+            />
+            <ToggleRow
+              label="Source loader in panel"
+              checked={settings.showSourceLoader}
+              onChange={(v) => onChange({ showSourceLoader: v })}
             />
           </Section>
 
