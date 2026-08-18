@@ -53,6 +53,9 @@ export type ExecutionMode = "local" | "replit";
  */
 export interface ExecutorService {
   readonly mode: ExecutionMode;
+  /** Place the loaded source video into the working dir under `filename`
+   *  (copy locally, upload to the remote executor for Replit). */
+  stageSource(localAbsPath: string, filename: string): Promise<void>;
   /** Execute a single operation and return its result. */
   runOperation(spec: OperationSpec): Promise<OperationResult>;
   /** Execute a list of operations in the given (already topological) order. */

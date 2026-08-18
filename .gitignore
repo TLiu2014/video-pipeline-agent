@@ -30,6 +30,9 @@ next-env.d.ts
 !/public/samples/
 !/public/samples/**
 
+# Replit executor working dir
+/deploy/replit-executor/work/
+
 # misc
 .DS_Store
 *.log

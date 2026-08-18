@@ -4,11 +4,24 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 
 const DESCRIPTION =
-  "Agentic Cinema — describe a video workflow in plain English and a Gemini-powered multi-agent pipeline builds and runs it: AI dubbing, bilingual subtitle burning, social-media aspect-ratio crops and more.";
+  "CineDAG — describe a video workflow in plain English and a Gemini-powered multi-agent pipeline builds and runs it: AI dubbing, bilingual subtitle burning, social-media aspect-ratio crops and more.";
 
 export const metadata: Metadata = {
-  title: "Agentic Cinema — Multimodal Video Pipeline Builder",
+  title: "CineDAG — Build & run multimodal video pipelines",
   description: DESCRIPTION,
+  icons: { icon: "/icon.svg" },
+  openGraph: {
+    title: "CineDAG — Build & run multimodal video pipelines",
+    description: DESCRIPTION,
+    type: "website",
+    images: [{ url: "/brand-16x9.png", width: 1920, height: 1080 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "CineDAG",
+    description: DESCRIPTION,
+    images: ["/brand-16x9.png"],
+  },
 };
 
 // Applied before hydration so a stored dark theme doesn't flash light first.

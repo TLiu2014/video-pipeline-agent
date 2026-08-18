@@ -269,8 +269,9 @@ export function SettingsMenu({
           {/* About */}
           <Section label="About" last>
             <p className="text-[11px] leading-snug text-slate-500 dark:text-slate-400">
-              <strong>Agentic Cinema</strong> — describe a video workflow and a
-              Gemini multi-agent pipeline builds &amp; runs it.
+              <strong>CineDAG</strong> — describe a video workflow and a Gemini
+              multi-agent pipeline builds &amp; runs it. An Agentic Cinema
+              project.
             </p>
             <a
               href="https://github.com/TLiu2014/video-pipeline-agent"

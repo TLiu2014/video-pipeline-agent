@@ -1,0 +1,51 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CineDAG">
+  <defs>
+    <linearGradient id="cfBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <radialGradient id="cfSheen" cx="0.28" cy="0.22" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="cfShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0B2A63" flood-opacity="0.28"/>
+    </filter>
+    <clipPath id="cfClap"><rect x="228" y="158" width="214" height="44" rx="12"/></clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="120" fill="url(#cfBg)"/>
+  <rect width="512" height="512" rx="120" fill="url(#cfSheen)"/>
+
+  <g filter="url(#cfShadow)">
+    <!-- flow edges: two nodes → clapperboard (straight) -->
+    <g stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="16" stroke-linecap="round">
+      <line x1="108" y1="196" x2="228" y2="238"/>
+      <line x1="108" y1="316" x2="228" y2="284"/>
+    </g>
+    <!-- source nodes -->
+    <g fill="#FFFFFF">
+      <circle cx="108" cy="196" r="21"/>
+      <circle cx="108" cy="316" r="21"/>
+    </g>
+
+    <!-- clapperboard (frame) -->
+    <rect x="228" y="202" width="214" height="152" rx="24" fill="#FFFFFF"/>
+    <rect x="228" y="158" width="214" height="44" rx="12" fill="#FFFFFF"/>
+    <g clip-path="url(#cfClap)" stroke="#4338CA" stroke-width="30">
+      <line x1="220" y1="214" x2="256" y2="150"/>
+      <line x1="264" y1="214" x2="300" y2="150"/>
+      <line x1="308" y1="214" x2="344" y2="150"/>
+      <line x1="352" y1="214" x2="388" y2="150"/>
+      <line x1="396" y1="214" x2="432" y2="150"/>
+      <line x1="440" y1="214" x2="476" y2="150"/>
+    </g>
+
+    <!-- AI sparkles on the slate -->
+    <g fill="#4338CA">
+      <path d="M328 230 L337.2 262.8 L370 272 L337.2 281.2 L328 314 L318.8 281.2 L286 272 L318.8 262.8 Z"/>
+      <path d="M392 216 L395.5 228.5 L408 232 L395.5 235.5 L392 248 L388.5 235.5 L376 232 L388.5 228.5 Z"/>
+      <path d="M286 308 L289.2 318.8 L300 322 L289.2 325.2 L286 336 L282.8 325.2 L272 322 L282.8 318.8 Z"/>
+    </g>
+  </g>
+</svg>

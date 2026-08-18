@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
-import { copyFile } from "node:fs/promises";
-import path from "node:path";
 import {
   executionMode,
   getExecutor,
   type OperationSpec,
 } from "@/lib/execution";
 import type { OpOutput } from "@/lib/execution/types";
-import {
-  RENDERS_DIR,
-  ensureMediaDirs,
-  fromPublicUrl,
-} from "@/lib/media";
+import { ensureMediaDirs, fromPublicUrl } from "@/lib/media";
 import type { GeneratedDag, MediaKind } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -62,9 +56,10 @@ export async function POST(req: Request) {
   }
 
   await ensureMediaDirs();
+  const executor = getExecutor();
 
-  // Stage the loaded source into the renders dir under each root resource's
-  // filename, so downstream ops read it by that name.
+  // Stage the loaded source into the working dir under each root resource's
+  // filename (copied locally, or uploaded to the Replit executor).
   if (sourceUrl) {
     const abs = fromPublicUrl(sourceUrl);
     if (abs) {
@@ -73,10 +68,9 @@ export async function POST(req: Request) {
       );
       await Promise.all(
         roots.map((n) =>
-          copyFile(
-            abs,
-            path.join(RENDERS_DIR, filenameOf.get(n.id) ?? `${n.id}.mp4`),
-          ).catch(() => {}),
+          executor
+            .stageSource(abs, filenameOf.get(n.id) ?? `${n.id}.mp4`)
+            .catch(() => {}),
         ),
       );
     }
@@ -107,7 +101,6 @@ export async function POST(req: Request) {
       };
     });
 
-  const executor = getExecutor();
   const mode = executionMode();
 
   // Stream NDJSON events so the UI shows live progress + logs and can follow the

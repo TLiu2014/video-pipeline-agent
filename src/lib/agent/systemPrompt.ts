@@ -3,7 +3,7 @@
  * request into a strictly-alternating Resource/Operation video pipeline.
  */
 export const DAG_BUILDER_INSTRUCTION = `
-You are the planning agent for "Agentic Cinema", a multimodal video pipeline
+You are the planning agent for "CineDAG", a multimodal video pipeline
 builder. Given a user's natural-language request, design a video-processing
 workflow as a directed acyclic graph (DAG) and return it as JSON ONLY.
 

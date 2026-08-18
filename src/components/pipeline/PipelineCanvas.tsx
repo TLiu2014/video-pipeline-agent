@@ -12,7 +12,7 @@ import {
   type Edge,
   type Node,
 } from "@xyflow/react";
-import { Clapperboard } from "lucide-react";
+import { CineDagTile } from "@/components/brand/CineDagMark";
 import type { PipelineEdge, PipelineFlowNode } from "@/lib/types";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { STATUS_STYLES } from "./nodeStyles";
@@ -168,9 +168,7 @@ function EmptyState() {
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
       <div className="flex max-w-xs flex-col items-center gap-2 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-white shadow">
-          <Clapperboard className="h-6 w-6" />
-        </div>
+        <CineDagTile size={48} className="rounded-xl" />
         <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
           Empty canvas
         </div>

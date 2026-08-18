@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { RENDERS_DIR, ensureMediaDirs, toPublicUrl } from "@/lib/media";
 import {
@@ -10,8 +10,13 @@ import {
   transcribeAudio,
 } from "@/lib/agent/transcribe";
 import { analyzeReframe } from "@/lib/agent/reframe";
-
-const VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
+import {
+  VIDEO_RE,
+  applyTemplate,
+  parseFocalX,
+  referencedInputs,
+  smartReframeCommand,
+} from "./ffmpegCommand";
 import type {
   ExecutorService,
   OperationResult,
@@ -25,8 +30,8 @@ const execAsync = promisify(exec);
  * Runs operations on the local machine inside the renders working directory.
  *
  * - "ffmpeg" ops are executed for real via child_process.
- * - "gemini" ops that produce subtitles run real Gemini transcription +
- *   translation (needs GOOGLE_API_KEY); other gemini ops are stubbed.
+ * - "gemini" ops produce real subtitles (transcription) or a reframe crop plan
+ *   (needs GOOGLE_API_KEY); they skip cleanly without a key.
  * - "tts" ops are stubbed (wire a TTS service here for AI dubbing).
  */
 export class LocalFfmpegRunner implements ExecutorService {
@@ -38,11 +43,16 @@ export class LocalFfmpegRunner implements ExecutorService {
     return toPublicUrl(path.join(this.dir, filename)) ?? `/renders/${filename}`;
   }
 
+  /** Stage the loaded source into the working dir under its pipeline filename. */
+  async stageSource(localAbsPath: string, filename: string): Promise<void> {
+    await ensureMediaDirs();
+    await copyFile(localAbsPath, path.join(this.dir, filename));
+  }
+
   async runOperation(spec: OperationSpec): Promise<OperationResult> {
     await ensureMediaDirs();
     if (spec.engine === "ffmpeg") return this.runFfmpeg(spec);
     if (spec.engine === "gemini") return this.runGemini(spec);
-    // tts (and anything else): stubbed for now.
     return {
       id: spec.id,
       ok: true,
@@ -56,55 +66,29 @@ export class LocalFfmpegRunner implements ExecutorService {
   private async runFfmpeg(spec: OperationSpec): Promise<OperationResult> {
     const out = spec.outputs[0];
     if (!out) {
-      return {
-        id: spec.id,
-        ok: false,
-        error: "ffmpeg operation has no output",
-        logs: "",
-        produced: [],
-      };
+      return errResult(spec.id, "ffmpeg operation has no output");
     }
 
-    // Smart reframe: if this op consumes a crop plan (produced by the Gemini
-    // Speaker Tracker), crop a 9:16 window centered on the subject. Without a
-    // plan (Gemini skipped), fall back to the op's own command (dumb center
-    // crop) — so the flow still runs, just less intelligently.
-    let command = await this.smartReframeCommand(spec, out.filename);
+    // Smart reframe when a crop plan exists; else the op's own (dumb) command.
+    let command = await this.reframeCommand(spec, out.filename);
     if (!command) {
-      if (!spec.command) {
-        return {
-          id: spec.id,
-          ok: false,
-          error: "ffmpeg operation missing command",
-          logs: "",
-          produced: [],
-        };
-      }
-      command = this.buildCommand(spec, out.filename);
+      if (!spec.command)
+        return errResult(spec.id, "ffmpeg operation missing command");
+      command = applyTemplate(
+        this.ffmpegBin,
+        spec.command,
+        spec.inputs,
+        out.filename,
+      );
     }
 
-    // Don't run the op if the input files its command actually references were
-    // never produced (e.g. the Subtitle Burner when transcription was skipped).
-    // Inputs not referenced by the command (like the optional crop plan) don't
-    // gate execution — so the reframe still runs its center-crop fallback.
+    // Skip if inputs the command references weren't produced (e.g. burner with
+    // no subs). Optional inputs (the crop plan) aren't referenced → don't gate.
     const missing: string[] = [];
-    for (const f of spec.inputs) {
-      if (command.includes(f) && !(await exists(path.join(this.dir, f)))) {
-        missing.push(f);
-      }
+    for (const f of referencedInputs(command, spec.inputs)) {
+      if (!(await exists(path.join(this.dir, f)))) missing.push(f);
     }
-    if (missing.length) {
-      return {
-        id: spec.id,
-        ok: true,
-        skipped: true,
-        error: `needs ${missing.join(", ")}`,
-        logs: `[local] "${spec.label}" not run — missing input(s): ${missing.join(
-          ", ",
-        )}. Produce them first (this step depends on an earlier stage that didn't complete).`,
-        produced: [],
-      };
-    }
+    if (missing.length) return skipMissing(spec, missing);
 
     try {
       const { stdout, stderr } = await execAsync(command, {
@@ -132,15 +116,29 @@ export class LocalFfmpegRunner implements ExecutorService {
     }
   }
 
-  /** Route a gemini op to transcription (subtitle outputs) or reframe analysis
-   *  (a text/plan output). */
+  /** Build the smart-reframe command if a usable crop plan is present. */
+  private async reframeCommand(
+    spec: OperationSpec,
+    outFile: string,
+  ): Promise<string | null> {
+    const planFile = spec.inputs.find((f) => f.endsWith(".json"));
+    if (!planFile) return null;
+    let focal: number | null = null;
+    try {
+      focal = parseFocalX(await readFile(path.join(this.dir, planFile), "utf8"));
+    } catch {
+      return null;
+    }
+    if (focal == null) return null;
+    const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
+    return smartReframeCommand(this.ffmpegBin, video, outFile, focal);
+  }
+
   private async runGemini(spec: OperationSpec): Promise<OperationResult> {
     const subs = spec.outputs.filter((o) => o.media === "subtitle");
     if (subs.length > 0) return this.runTranscribe(spec, subs);
-
     const plan = spec.outputs.find((o) => o.media === "text");
     if (plan) return this.runReframeAnalysis(spec, plan);
-
     return {
       id: spec.id,
       ok: true,
@@ -150,29 +148,18 @@ export class LocalFfmpegRunner implements ExecutorService {
     };
   }
 
-  /** Gemini transcription + translation for subtitle outputs. */
   private async runTranscribe(
     spec: OperationSpec,
     subs: OperationSpec["outputs"],
   ): Promise<OperationResult> {
     const audio = spec.inputs[0];
-    if (!audio) {
-      return {
-        id: spec.id,
-        ok: false,
-        error: "no audio input for transcription",
-        logs: "",
-        produced: [],
-      };
-    }
-
+    if (!audio) return errResult(spec.id, "no audio input for transcription");
     const langs = subs.map((o) => langFromFilename(o.filename));
     try {
       const segments = await transcribeAudio(path.join(this.dir, audio), langs);
       const produced: ProducedArtifact[] = [];
       for (const o of subs) {
-        const lang = langFromFilename(o.filename);
-        const srt = toSrt(segments, lang);
+        const srt = toSrt(segments, langFromFilename(o.filename));
         await writeFile(path.join(this.dir, o.filename), srt, "utf8");
         produced.push({
           id: o.id,
@@ -189,32 +176,16 @@ export class LocalFfmpegRunner implements ExecutorService {
         produced,
       };
     } catch (err) {
-      return {
-        id: spec.id,
-        ok: false,
-        skipped: !process.env.GOOGLE_API_KEY && !process.env.GEMINI_API_KEY,
-        error: err instanceof Error ? err.message : "transcription failed",
-        logs: `[gemini] ${err instanceof Error ? err.message : "failed"} — set GOOGLE_API_KEY to enable real transcription.`,
-        produced: [],
-      };
+      return geminiSkip(spec.id, err, "transcription");
     }
   }
 
-  /** Gemini reframe analysis → writes a crop plan for the ffmpeg reframe step. */
   private async runReframeAnalysis(
     spec: OperationSpec,
     planOut: OperationSpec["outputs"][number],
   ): Promise<OperationResult> {
     const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
-    if (!video) {
-      return {
-        id: spec.id,
-        ok: false,
-        error: "no video input for reframe analysis",
-        logs: "",
-        produced: [],
-      };
-    }
+    if (!video) return errResult(spec.id, "no video input for reframe analysis");
     try {
       const plan = await analyzeReframe(path.join(this.dir, video));
       await writeFile(
@@ -237,61 +208,8 @@ export class LocalFfmpegRunner implements ExecutorService {
         ],
       };
     } catch (err) {
-      return {
-        id: spec.id,
-        ok: false,
-        skipped: !process.env.GOOGLE_API_KEY && !process.env.GEMINI_API_KEY,
-        error: err instanceof Error ? err.message : "reframe analysis failed",
-        logs: `[gemini] ${err instanceof Error ? err.message : "failed"} — set GOOGLE_API_KEY for smart reframing (falling back to center crop).`,
-        produced: [],
-      };
+      return geminiSkip(spec.id, err, "reframe");
     }
-  }
-
-  /**
-   * If the op consumes a crop plan (a .json input with a focalX), build a
-   * subject-centered 9:16 crop. Returns null when there's no usable plan, so the
-   * caller falls back to the op's own (dumb center-crop) command.
-   */
-  private async smartReframeCommand(
-    spec: OperationSpec,
-    outFile: string,
-  ): Promise<string | null> {
-    const planFile = spec.inputs.find((f) => f.endsWith(".json"));
-    if (!planFile) return null;
-    let focalX: number | null = null;
-    try {
-      const raw = await readFile(path.join(this.dir, planFile), "utf8");
-      const fx = Number(JSON.parse(raw)?.focalX);
-      if (Number.isFinite(fx)) focalX = Math.min(1, Math.max(0, fx));
-    } catch {
-      return null; // plan missing / unreadable → dumb fallback
-    }
-    if (focalX == null) return null;
-    const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
-    // Crop a 9:16 window whose center tracks the subject, then scale to 1080x1920.
-    // Single-quoted expr protects the commas from the filtergraph parser.
-    const filter =
-      `crop=ih*9/16:ih:x='min(max(${focalX}*iw-ih*9/16/2,0),iw-ih*9/16)':y=0,` +
-      `scale=1080:1920`;
-    return `${this.ffmpegBin} -nostdin -y -i ${quote(video)} -vf "${filter}" ${quote(outFile)}`;
-  }
-
-  /** Substitute {in}, {in0..n} and {out} placeholders in a command template. */
-  private buildCommand(spec: OperationSpec, outFile: string): string {
-    let cmd = (spec.command ?? "").trim();
-    if (cmd.startsWith("ffmpeg")) {
-      // Inject -nostdin (never block on a prompt — non-interactive exec has no
-      // stdin) and -y (auto-overwrite existing outputs on re-runs). Without
-      // these, a re-run hangs forever on ffmpeg's "Overwrite? [y/N]" prompt.
-      cmd = `${this.ffmpegBin} -nostdin -y${cmd.slice("ffmpeg".length)}`;
-    }
-    cmd = cmd.replace(/\{in(\d+)\}/g, (_m, i) =>
-      quote(spec.inputs[Number(i)] ?? ""),
-    );
-    cmd = cmd.replace(/\{in\}/g, quote(spec.inputs[0] ?? ""));
-    cmd = cmd.replace(/\{out\}/g, quote(outFile));
-    return cmd;
   }
 
   async runPipeline(specs: OperationSpec[]): Promise<OperationResult[]> {
@@ -299,24 +217,56 @@ export class LocalFfmpegRunner implements ExecutorService {
     for (const spec of specs) {
       const r = await this.runOperation(spec);
       results.push(r);
-      if (!r.ok) break; // stop the line on the first hard failure
+      if (!r.ok && !r.skipped) break;
     }
     return results;
   }
 }
 
+/* ── shared result helpers (used by both runners) ──────────────────────────── */
+
+export function errResult(id: string, error: string): OperationResult {
+  return { id, ok: false, error, logs: "", produced: [] };
+}
+
+export function skipMissing(
+  spec: OperationSpec,
+  missing: string[],
+): OperationResult {
+  return {
+    id: spec.id,
+    ok: true,
+    skipped: true,
+    error: `needs ${missing.join(", ")}`,
+    logs: `"${spec.label}" not run — missing input(s): ${missing.join(
+      ", ",
+    )}. Produce them first (an earlier stage didn't complete).`,
+    produced: [],
+  };
+}
+
+export function geminiSkip(
+  id: string,
+  err: unknown,
+  what: string,
+): OperationResult {
+  const msg = err instanceof Error ? err.message : `${what} failed`;
+  return {
+    id,
+    ok: false,
+    skipped: !process.env.GOOGLE_API_KEY && !process.env.GEMINI_API_KEY,
+    error: msg,
+    logs: `[gemini] ${msg} — set GOOGLE_API_KEY to enable ${what}.`,
+    produced: [],
+  };
+}
+
 /** Whether a file exists (and is readable). */
-async function exists(p: string): Promise<boolean> {
+export async function exists(p: string): Promise<boolean> {
   try {
     await access(p);
     return true;
   } catch {
     return false;
   }
-}
-
-/** Minimal shell-safe single-quoting for POSIX shells. */
-function quote(s: string): string {
-  if (s === "") return "''";
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

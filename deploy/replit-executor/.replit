@@ -1,0 +1,12 @@
+run = "npm install && npm start"
+entrypoint = "server.js"
+
+[env]
+WORKDIR = "work"
+
+[nix]
+channel = "stable-24_05"
+
+[[ports]]
+localPort = 3000
+externalPort = 80

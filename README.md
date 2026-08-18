@@ -1,6 +1,6 @@
-# 🎬 Agentic Cinema — Multimodal Video Pipeline Builder
+# 🎬 CineDAG — Build & run multimodal video pipelines
 
-> **Agentic Cinema Hackathon · Replit Partner Track**
+> **Agentic Cinema Hackathon · Replit Partner Track** · repo: `video-pipeline-agent`
 
 Describe a video workflow in plain English and a **Gemini-powered multi-agent
 pipeline** builds and runs it — AI dubbing, bilingual subtitle burning,
@@ -126,14 +126,15 @@ interface ExecutorService {
 }
 ```
 
-- **`LocalFfmpegRunner`** — executes `ffmpeg` operations via `child_process` in
-  `MEDIA_DIR`; `gemini`/`tts` operations resolve as *skipped* (wire in the model
-  calls there).
-- **`ReplitCloudRunner`** — provisions a workspace, pushes the FFmpeg scripts,
-  runs them remotely, and returns the artifacts. Network calls are stubbed with
-  clear TODOs so the Replit API can be dropped in without touching the UI.
+- **`LocalFfmpegRunner`** — runs `ffmpeg` ops via `child_process`; `gemini` ops
+  run real transcription / reframe analysis via the ADK (need `GOOGLE_API_KEY`,
+  skip cleanly without one); `tts` is stubbed.
+- **`ReplitCloudRunner`** — offloads every FFmpeg step to a small executor
+  service on Replit (`deploy/replit-executor`) over HTTP (upload → exec →
+  download), and pulls outputs back for preview. Gemini calls still run locally,
+  so your key never leaves your machine. **Setup: [`docs/REPLIT_SETUP.md`](docs/REPLIT_SETUP.md).**
 
-Swap engines by setting `EXECUTION_MODE` — no code changes.
+Swap engines by setting `EXECUTION_MODE` — no app code changes.
 
 ## Scripts
 
