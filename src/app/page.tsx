@@ -1,16 +1,6 @@
-import { Builder } from "@/components/pipeline/Builder";
+import LandingPage from "@/components/site/LandingPage";
 
-// Read the server-configured engine settings and hand them to the client shell.
-export default function Page() {
-  const executionMode =
-    process.env.EXECUTION_MODE === "replit" ? "replit" : "local";
-  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-  const maxUploadMb = Number(process.env.MAX_UPLOAD_MB || 100);
-  return (
-    <Builder
-      executionMode={executionMode}
-      model={model}
-      maxUploadMb={maxUploadMb}
-    />
-  );
+// Marketing landing page at `/`. The tool lives at `/app`; docs at `/docs`.
+export default function Home() {
+  return <LandingPage />;
 }

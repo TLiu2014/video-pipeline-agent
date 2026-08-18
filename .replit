@@ -1,0 +1,29 @@
+# Replit config for the FULL CineDAG app (Next.js) — Replit Partner Track.
+# Importing this repo through Replit Agent ("get it running") is the
+# "built using Replit Agent" development step; deploying gives the required
+# *.replit.app / *.replit.dev domain. FFmpeg is provided by replit.nix, so with
+# EXECUTION_MODE=local the media steps run *on Replit* — no separate executor.
+run = "corepack enable && pnpm install --frozen-lockfile && pnpm build && pnpm start:replit"
+entrypoint = "src/app/page.tsx"
+hidden = [".next", "node_modules"]
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+EXECUTION_MODE = "local"
+NEXT_TELEMETRY_DISABLED = "1"
+FFMPEG_PATH = "ffmpeg"
+# GOOGLE_API_KEY and GEMINI_MODEL go in Replit *Secrets*, not here.
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+# Reserved VM (single, persistent instance) — the app writes renders to the
+# local filesystem and serves them back via /api/file/*, so a stateless
+# autoscale deployment would lose files between requests.
+[deployment]
+deploymentTarget = "gce"
+build = ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm build"]
+run = ["sh", "-c", "pnpm start:replit"]
