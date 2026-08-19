@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateDag, hasApiKey } from "@/lib/agent/dagBuilder";
+import { apiKeyFromRequest, runWithApiKey } from "@/lib/agent/keyContext";
 import { SAMPLE_DAG } from "@/lib/dag";
 import type { GenerateDagResponse } from "@/lib/types";
 
@@ -13,6 +14,7 @@ export const runtime = "nodejs";
  * no API key is set or the model errors, so the UI is always demoable.
  */
 export async function POST(req: Request) {
+  const clientKey = apiKeyFromRequest(req);
   let prompt = "";
   try {
     const body = await req.json();
@@ -28,6 +30,11 @@ export async function POST(req: Request) {
     );
   }
 
+  // Run under the BYOK context so hasApiKey()/generateDag() see the client key.
+  return runWithApiKey(clientKey, () => handle(prompt));
+}
+
+async function handle(prompt: string) {
   if (!hasApiKey()) {
     const res: GenerateDagResponse = {
       dag: SAMPLE_DAG,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Header } from "./Header";
 import { PipelineCanvas } from "./PipelineCanvas";
@@ -28,7 +28,12 @@ interface BuilderProps {
   executionMode: string;
   model: string;
   maxUploadMb: number;
+  /** Whether the server already has a Gemini key in env (GOOGLE_API_KEY). */
+  hasServerKey: boolean;
 }
+
+/** BYOK key persisted in this browser only. */
+const GEMINI_KEY_STORAGE = "video-agent:gemini-key";
 
 /** An operation's result carried by the `op-done` stream event. */
 interface OpEvent {
@@ -64,7 +69,12 @@ function lastFocusId(
   return edges.find((e) => e.source === lastOpId)?.target ?? lastOpId;
 }
 
-export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
+export function Builder({
+  executionMode,
+  model,
+  maxUploadMb,
+  hasServerKey,
+}: BuilderProps) {
   const initialDag = sampleById(DEFAULT_SAMPLE_ID);
   const initial = useMemo(() => hydrateDag(initialDag), [initialDag]);
   const [prompt, setPrompt] = useState("");
@@ -79,6 +89,26 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
   const [source, setSource] = useState<LoadedSource | null>(null);
   const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  // BYOK Gemini key — hydrated from localStorage on mount (never during SSR).
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(GEMINI_KEY_STORAGE);
+      if (saved) setApiKey(saved);
+    } catch {
+      /* localStorage unavailable — ignore */
+    }
+  }, []);
+  const onApiKeySet = useCallback((key: string) => {
+    const trimmed = key.trim();
+    setApiKey(trimmed || null);
+    try {
+      if (trimmed) localStorage.setItem(GEMINI_KEY_STORAGE, trimmed);
+      else localStorage.removeItem(GEMINI_KEY_STORAGE);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const [settings, setSettings] = useState<AppSettings>({
     animateEdges: true,
     autoFit: true,
@@ -107,6 +137,10 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
 
   const idRef = useRef(0);
   const nextId = () => `e${idRef.current++}`;
+  // Latches once we auto-reveal the preview pane during a run, so we open it at
+  // most once — after that, whether it's open is the user's call (a manual close
+  // is respected and never re-opened until the next run).
+  const autoRevealedRef = useRef(false);
   const push = useCallback((e: Omit<TraceEntry, "id">) => {
     const id = nextId();
     setEntries((prev) => [...prev, { ...e, id }]);
@@ -189,7 +223,10 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
     try {
       const res = await fetch("/api/generate-dag", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(apiKey ? { "x-gemini-key": apiKey } : {}),
+        },
         body: JSON.stringify({ prompt: text }),
       });
       const data: GenerateDagResponse = await res.json();
@@ -219,7 +256,7 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
     } finally {
       setLoading(false);
     }
-  }, [prompt, loading, push, applyDag]);
+  }, [prompt, loading, push, applyDag, apiKey]);
 
   /** Fold a single op's result into its node + downstream resource nodes. */
   const applyOpResult = useCallback(
@@ -272,6 +309,7 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
   const run = useCallback(async () => {
     if (running || nodes.length === 0) return;
     setRunning(true);
+    autoRevealedRef.current = false; // allow one auto-open of the preview per run
     // Reset operations to queued; clear prior errors.
     setNodes((prev) =>
       prev.map((n) =>
@@ -309,7 +347,10 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
       };
       const res = await fetch("/api/execute", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(apiKey ? { "x-gemini-key": apiKey } : {}),
+        },
         body: JSON.stringify({ dag: liveDag, sourceUrl: source?.url ?? null }),
       });
       if (!res.body) throw new Error("no response stream");
@@ -353,6 +394,24 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
             else if (!ev.ok) failed++;
             lastOpId = ev.id;
             applyOpResult(ev);
+            // When the flow produces a resource that has content, follow it in
+            // the preview pane. Reveal the pane at most once per run (latched),
+            // so a manual close is never overridden — subsequent produced nodes
+            // just advance the selected tab without re-opening it.
+            const producedPreview = ev.ok
+              ? ev.produced?.find((p) => p.url)
+              : undefined;
+            if (producedPreview && settings.followActive) {
+              setPreviewNodeId(producedPreview.id);
+              if (!autoRevealedRef.current) {
+                autoRevealedRef.current = true;
+                setSettings((s) =>
+                  s.resultsLayout === "hidden"
+                    ? { ...s, resultsLayout: "bottom" }
+                    : s,
+                );
+              }
+            }
             const tid = traceByOp.get(ev.id);
             const status: TraceStatus = ev.ok || ev.skipped ? "done" : "failed";
             const detail = ev.ok
@@ -403,6 +462,7 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
     update,
     applyOpResult,
     settings.followActive,
+    apiKey,
   ]);
 
   // Every resource node is previewable as a tab; the artifact URL may be absent
@@ -457,6 +517,9 @@ export function Builder({ executionMode, model, maxUploadMb }: BuilderProps) {
         onSampleChange={onSampleChange}
         executionMode={executionMode}
         model={model}
+        apiKey={apiKey}
+        onApiKeySet={onApiKeySet}
+        hasServerKey={hasServerKey}
       />
 
       <div className="flex min-h-0 flex-1">

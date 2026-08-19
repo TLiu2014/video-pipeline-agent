@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { LlmAgent, InMemoryRunner } from "@google/adk";
-import { geminiModel, hasApiKey } from "./dagBuilder";
+import { geminiModelParam, hasApiKey } from "./dagBuilder";
 
 export interface CropPlan {
   /** Horizontal center of the subject, 0 (far left) … 1 (far right). */
@@ -40,7 +40,7 @@ export async function analyzeReframe(absVideoPath: string): Promise<CropPlan> {
 
   const agent = new LlmAgent({
     name: "reframe_analyzer",
-    model: geminiModel(),
+    model: geminiModelParam(),
     description: "Finds the main subject's horizontal position for reframing.",
     instruction: `You are reframing a 16:9 video into a 9:16 vertical short. Watch the clip and locate the MAIN SUBJECT (the speaker / person / focal action).
 Return JSON ONLY:

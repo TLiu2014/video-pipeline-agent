@@ -12,6 +12,9 @@ interface HeaderProps {
   onSampleChange: (id: SampleId) => void;
   executionMode: string;
   model: string;
+  apiKey: string | null;
+  onApiKeySet: (key: string) => void;
+  hasServerKey: boolean;
 }
 
 /** Slim top bar: brand on the left, settings + theme on the right. The prompt
@@ -23,6 +26,9 @@ export function Header({
   onSampleChange,
   executionMode,
   model,
+  apiKey,
+  onApiKeySet,
+  hasServerKey,
 }: HeaderProps) {
   return (
     <header className="z-20 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-2.5 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
@@ -44,6 +50,9 @@ export function Header({
           onSampleChange={onSampleChange}
           executionMode={executionMode}
           model={model}
+          apiKey={apiKey}
+          onApiKeySet={onApiKeySet}
+          hasServerKey={hasServerKey}
         />
       </div>
     </header>

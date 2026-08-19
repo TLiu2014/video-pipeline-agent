@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { LlmAgent, InMemoryRunner } from "@google/adk";
-import { geminiModel, hasApiKey } from "./dagBuilder";
+import { geminiModelParam, hasApiKey } from "./dagBuilder";
 
 export interface SubSegment {
   /** Start time in seconds. */
@@ -54,7 +54,7 @@ export async function transcribeAudio(
 
   const agent = new LlmAgent({
     name: "subtitle_transcriber",
-    model: geminiModel(),
+    model: geminiModelParam(),
     description: "Transcribes speech from audio and translates it.",
     instruction: `You transcribe speech from an audio clip into timed subtitle segments and translate each segment.
 Return JSON ONLY in this exact shape:

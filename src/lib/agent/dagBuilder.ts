@@ -1,23 +1,35 @@
-import { LlmAgent, InMemoryRunner } from "@google/adk";
+import { LlmAgent, InMemoryRunner, Gemini } from "@google/adk";
 import type { GeneratedDag } from "@/lib/types";
 import { DAG_BUILDER_INSTRUCTION } from "./systemPrompt";
+import { clientApiKey } from "./keyContext";
 
-/** True when a Gemini/Google API key is available to the ADK. */
+/** True when a Gemini/Google API key is available — BYOK (this request) or env. */
 export function hasApiKey(): boolean {
-  return Boolean(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+  return Boolean(
+    clientApiKey() || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY,
+  );
 }
 
 export function geminiModel(): string {
   return process.env.GEMINI_MODEL || "gemini-3.5-flash";
 }
 
-/** Lazily build the DAG-builder LlmAgent (one per process is fine). */
-let cachedAgent: LlmAgent | null = null;
+/**
+ * The `model` to hand an LlmAgent. With a BYOK key present, bind an explicit
+ * Gemini instance to it; otherwise pass the model name string and let
+ * @google/genai resolve the key from GOOGLE_API_KEY / GEMINI_API_KEY in env
+ * (its constructor requires an explicit key, so we only build it for BYOK).
+ */
+export function geminiModelParam(): string | Gemini {
+  const key = clientApiKey();
+  return key ? new Gemini({ model: geminiModel(), apiKey: key }) : geminiModel();
+}
+
+/** Build the DAG-builder LlmAgent (per call — the resolved key can vary). */
 function getAgent(): LlmAgent {
-  if (cachedAgent) return cachedAgent;
-  cachedAgent = new LlmAgent({
+  return new LlmAgent({
     name: "video_dag_builder",
-    model: geminiModel(),
+    model: geminiModelParam(),
     description:
       "Plans a strictly-alternating Resource/Operation video-processing DAG from a natural-language request.",
     instruction: DAG_BUILDER_INSTRUCTION,
@@ -28,7 +40,6 @@ function getAgent(): LlmAgent {
       temperature: 0.4,
     },
   });
-  return cachedAgent;
 }
 
 /** Pull all model text out of an ADK event stream. */

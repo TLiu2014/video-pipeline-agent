@@ -67,7 +67,7 @@ export function ResultsPanel({
       {/* Header + tabs */}
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-slate-200 px-2 dark:border-slate-800">
         <span className="mr-1 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-          Results
+          Preview
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {/* Library tab (always first) */}
@@ -106,7 +106,7 @@ export function ResultsPanel({
           <button
             type="button"
             onClick={() => onLayoutChange("top")}
-            aria-label="Dock results top"
+            aria-label="Dock preview top"
             title="Dock top"
             className={cn(
               "rounded p-1 transition-colors",
@@ -120,7 +120,7 @@ export function ResultsPanel({
           <button
             type="button"
             onClick={() => onLayoutChange("right")}
-            aria-label="Dock results right"
+            aria-label="Dock preview right"
             title="Dock right"
             className={cn(
               "rounded p-1 transition-colors",
@@ -134,7 +134,7 @@ export function ResultsPanel({
           <button
             type="button"
             onClick={() => onLayoutChange("bottom")}
-            aria-label="Dock results bottom"
+            aria-label="Dock preview bottom"
             title="Dock bottom"
             className={cn(
               "rounded p-1 transition-colors",
@@ -148,8 +148,8 @@ export function ResultsPanel({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Hide results"
-            title="Hide results"
+            aria-label="Hide preview"
+            title="Hide preview"
             className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
           >
             <X className="h-4 w-4" />

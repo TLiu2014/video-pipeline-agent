@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useTheme, type Theme } from "@/components/theme/ThemeProvider";
 import { Switch } from "@/components/ui/Switch";
+import { ApiKeyInput } from "./ApiKeyInput";
 import { cn } from "@/lib/utils";
 import { SAMPLES, type SampleId } from "@/lib/dag";
 
@@ -45,6 +46,11 @@ interface SettingsMenuProps {
   /** Server-configured execution mode (read-only; set via EXECUTION_MODE). */
   executionMode: string;
   model: string;
+  /** BYOK Gemini key stored in the browser (null = none). */
+  apiKey: string | null;
+  onApiKeySet: (key: string) => void;
+  /** Whether the server already has a Gemini key in env. */
+  hasServerKey: boolean;
 }
 
 /**
@@ -59,6 +65,9 @@ export function SettingsMenu({
   onSampleChange,
   executionMode,
   model,
+  apiKey,
+  onApiKeySet,
+  hasServerKey,
 }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -172,7 +181,7 @@ export function SettingsMenu({
             />
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-600 dark:text-slate-300">
-                Results view
+                Preview view
               </span>
               <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
                 {(
@@ -188,7 +197,7 @@ export function SettingsMenu({
                     type="button"
                     onClick={() => onChange({ resultsLayout: v })}
                     aria-pressed={settings.resultsLayout === v}
-                    title={`Results ${label}`}
+                    title={`Preview ${label}`}
                     className={cn(
                       "inline-flex items-center justify-center rounded-md p-1.5 transition-colors",
                       settings.resultsLayout === v
@@ -246,6 +255,11 @@ export function SettingsMenu({
               label="Model"
               value={model}
               hint="Google ADK · Gemini"
+            />
+            <ApiKeyInput
+              currentApiKey={apiKey}
+              onApiKeySet={onApiKeySet}
+              hasServerKey={hasServerKey}
             />
             <InfoRow
               icon={isReplit ? Server : MonitorSmartphone}

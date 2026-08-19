@@ -12,11 +12,15 @@ export default function AppPage() {
     process.env.EXECUTION_MODE === "replit" ? "replit" : "local";
   const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
   const maxUploadMb = Number(process.env.MAX_UPLOAD_MB || 100);
+  const hasServerKey = Boolean(
+    process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY,
+  );
   return (
     <Builder
       executionMode={executionMode}
       model={model}
       maxUploadMb={maxUploadMb}
+      hasServerKey={hasServerKey}
     />
   );
 }

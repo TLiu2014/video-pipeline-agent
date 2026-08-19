@@ -5,6 +5,7 @@ import {
   type OperationSpec,
 } from "@/lib/execution";
 import type { OpOutput } from "@/lib/execution/types";
+import { apiKeyFromRequest, runWithApiKey } from "@/lib/agent/keyContext";
 import { ensureMediaDirs, fromPublicUrl } from "@/lib/media";
 import type { GeneratedDag, MediaKind } from "@/lib/types";
 
@@ -19,6 +20,7 @@ export const runtime = "nodejs";
  * outputs = downstream resource nodes) and runs it through the ExecutorService.
  */
 export async function POST(req: Request) {
+  const clientKey = apiKeyFromRequest(req);
   let dag: GeneratedDag | undefined;
   let sourceUrl: string | null = null;
   try {
@@ -110,24 +112,28 @@ export async function POST(req: Request) {
     async start(controller) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
-      send({ type: "start", mode, count: specs.length });
-      try {
-        for (const spec of specs) {
-          send({ type: "op-start", id: spec.id, label: spec.label });
-          const r = await executor.runOperation(spec);
-          send({ type: "op-done", ...r });
-          // Continue past a *skipped* step (e.g. Gemini with no key) so the
-          // downstream ffmpeg can still run its fallback; only a hard failure
-          // stops the line.
-          if (!r.ok && !r.skipped) break;
+      // Run the loop under the BYOK context so Gemini ops (transcribe / reframe)
+      // deep in the executor pick up the client's key.
+      await runWithApiKey(clientKey, async () => {
+        send({ type: "start", mode, count: specs.length });
+        try {
+          for (const spec of specs) {
+            send({ type: "op-start", id: spec.id, label: spec.label });
+            const r = await executor.runOperation(spec);
+            send({ type: "op-done", ...r });
+            // Continue past a *skipped* step (e.g. Gemini with no key) so the
+            // downstream ffmpeg can still run its fallback; only a hard failure
+            // stops the line.
+            if (!r.ok && !r.skipped) break;
+          }
+        } catch (err) {
+          send({
+            type: "error",
+            error: err instanceof Error ? err.message : "execution failed",
+          });
         }
-      } catch (err) {
-        send({
-          type: "error",
-          error: err instanceof Error ? err.message : "execution failed",
-        });
-      }
-      send({ type: "done", mode });
+        send({ type: "done", mode });
+      });
       controller.close();
     },
   });
