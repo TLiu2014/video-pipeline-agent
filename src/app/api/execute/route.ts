@@ -138,6 +138,10 @@ export async function POST(req: Request) {
         inputs,
         outputs,
         subtitleStyle,
+        subtitleFontSize:
+          typeof node.data?.subtitleFontSize === "number"
+            ? node.data.subtitleFontSize
+            : undefined,
       };
     });
 

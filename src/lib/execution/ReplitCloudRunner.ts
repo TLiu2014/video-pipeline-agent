@@ -17,11 +17,12 @@ import {
   applyTemplate,
   bottomLumaProbeCommand,
   parseAvgLuma,
-  parseFocalX,
+  quote,
   referencedInputs,
   smartReframeCommand,
   subtitleBurnCommand,
   subtitleStyleFragment,
+  wantsVerticalReframe,
 } from "./ffmpegCommand";
 import {
   errResult,
@@ -216,6 +217,7 @@ export class ReplitCloudRunner implements ExecutorService {
           burnFiles,
           out.filename,
           subtitleStyleFragment(style, luma),
+          spec.subtitleFontSize,
         );
       }
     }
@@ -277,18 +279,17 @@ export class ReplitCloudRunner implements ExecutorService {
     };
   }
 
-  private async reframeCommand(
-    spec: OperationSpec,
-    outFile: string,
-  ): Promise<string | null> {
-    const planFile = spec.inputs.find((f) => f.endsWith(".json"));
-    if (!planFile) return null;
-    const buf = await this.remoteDownload(planFile);
-    if (!buf) return null;
-    const focal = parseFocalX(buf.toString("utf8"));
-    if (focal == null) return null;
-    const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
-    return smartReframeCommand(this.ffmpegBin, video, outFile, focal);
+  private reframeCommand(spec: OperationSpec, outFile: string): string | null {
+    if (!VIDEO_RE.test(outFile)) return null;
+    // A subtitle burner (has .srt inputs) is never a reframe.
+    if (spec.inputs.some((f) => SUBTITLE_RE.test(f))) return null;
+    const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+    if (!video) return null;
+    const hasPlan = spec.inputs.some((f) => f.endsWith(".json"));
+    if (!hasPlan && !wantsVerticalReframe(spec.command, spec.label, outFile)) {
+      return null;
+    }
+    return smartReframeCommand(this.ffmpegBin, video, outFile);
   }
 
   private async runGemini(spec: OperationSpec): Promise<OperationResult> {
@@ -296,6 +297,8 @@ export class ReplitCloudRunner implements ExecutorService {
     if (subs.length > 0) {
       const audio = spec.inputs.find((f) => AUDIO_RE.test(f));
       if (audio) return this.runTranscribe(spec, subs, audio);
+      const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+      if (video) return this.runTranscribeFromVideo(spec, subs, video);
       const srtIn = spec.inputs.find((f) => SUBTITLE_RE.test(f));
       if (srtIn) return this.runTranslate(spec, subs, srtIn);
       return skipMissing(spec, spec.inputs.length ? spec.inputs : ["audio"]);
@@ -345,6 +348,31 @@ export class ReplitCloudRunner implements ExecutorService {
     } catch (err) {
       return geminiSkip(spec.id, err, "translation");
     }
+  }
+
+  /** Transcriber wired straight to a video: extract audio on the executor,
+   *  then transcribe (Gemini runs locally on the pulled audio). */
+  private async runTranscribeFromVideo(
+    spec: OperationSpec,
+    subs: OperationSpec["outputs"],
+    video: string,
+  ): Promise<OperationResult> {
+    const audio = `${video}.audio.wav`;
+    try {
+      const r = await this.remoteExec(
+        `${this.ffmpegBin} -nostdin -y -i ${quote(video)} -vn -ac 1 -ar 16000 ${quote(audio)}`,
+      );
+      if (!r.ok) {
+        return geminiSkip(
+          spec.id,
+          new Error(r.stderr || "audio extraction failed"),
+          "audio extraction",
+        );
+      }
+    } catch (err) {
+      return geminiSkip(spec.id, err, "audio extraction");
+    }
+    return this.runTranscribe(spec, subs, audio);
   }
 
   /** Transcribe locally (input pulled from the executor, subs pushed back). */

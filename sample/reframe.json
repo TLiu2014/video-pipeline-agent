@@ -1,64 +1,118 @@
 {
   "id": "reframe",
-  "label": "Vertical Reframe",
-  "title": "Speaker-Tracked Vertical Reframe",
-  "summary": "Analyze a 16:9 master clip to track where the speaker is, then crop and re-frame it to a 9:16 vertical short that keeps them centered.",
+  "label": "Vertical + Auto-Captions",
+  "title": "Vertical Reels with Auto-Captions",
+  "summary": "Fit a 16:9 clip into a content-safe 9:16 vertical (blurred background, no crop), then transcribe the audio with Gemini and burn the captions onto the vertical video — ready for Reels / Shorts.",
   "nodes": [
     {
-      "id": "master",
+      "id": "source",
       "type": "resource",
       "data": {
-        "label": "16:9 Master Clip",
+        "nodeClass": "resource",
+        "label": "Source Video",
         "media": "video",
-        "filename": "master.mp4",
-        "description": "Landscape source at 1920x1080."
-      }
-    },
-    {
-      "id": "track",
-      "type": "operation",
-      "data": {
-        "label": "Speaker Tracker",
-        "agent": "Gemini watches the clip and returns the speaker's bounding box over time",
-        "engine": "gemini"
-      }
-    },
-    {
-      "id": "plan",
-      "type": "resource",
-      "data": {
-        "label": "Crop Plan",
-        "media": "text",
-        "filename": "crop-plan.json",
-        "description": "Per-timestamp crop window that follows the speaker."
+        "filename": "video-clip-1.mp4",
+        "description": "Original 16:9 landscape clip."
       }
     },
     {
       "id": "reframe",
       "type": "operation",
       "data": {
-        "label": "Reframe & Crop",
-        "agent": "Crops the video to a 9:16 window that tracks the speaker",
+        "nodeClass": "operation",
+        "label": "Vertical Reframe",
+        "agent": "Fits the full frame into 9:16 over a blurred background (no crop)",
         "engine": "ffmpeg",
-        "command": "ffmpeg -i {in} -vf \"crop=ih*9/16:ih,scale=1080:1920\" {out}"
+        "command": "ffmpeg -i {in} -vf \"split[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2\" {out}"
       }
     },
     {
-      "id": "short",
+      "id": "vertical",
       "type": "resource",
       "data": {
-        "label": "9:16 Vertical Short",
+        "nodeClass": "resource",
+        "label": "Vertical Video",
         "media": "video",
         "filename": "vertical.mp4",
-        "description": "Ready for Reels / Shorts / TikTok at 1080x1920."
+        "description": "9:16 video, full content preserved."
+      }
+    },
+    {
+      "id": "audio-extractor",
+      "type": "operation",
+      "data": {
+        "nodeClass": "operation",
+        "label": "Audio Extractor",
+        "agent": "Pulls the audio track for transcription",
+        "engine": "ffmpeg",
+        "command": "ffmpeg -i {in} -vn -ac 1 -ar 16000 {out}"
+      }
+    },
+    {
+      "id": "audio",
+      "type": "resource",
+      "data": {
+        "nodeClass": "resource",
+        "label": "Audio Track",
+        "media": "audio",
+        "filename": "audio.wav",
+        "description": "Mono 16 kHz audio for speech recognition."
+      }
+    },
+    {
+      "id": "transcriber",
+      "type": "operation",
+      "data": {
+        "nodeClass": "operation",
+        "label": "Gemini Transcriber",
+        "agent": "Transcribes speech into timed subtitle segments",
+        "engine": "gemini"
+      }
+    },
+    {
+      "id": "captions",
+      "type": "resource",
+      "data": {
+        "nodeClass": "resource",
+        "label": "Captions",
+        "media": "subtitle",
+        "filename": "captions.srt",
+        "description": "Auto-generated timed captions."
+      }
+    },
+    {
+      "id": "subtitle-burner",
+      "type": "operation",
+      "data": {
+        "nodeClass": "operation",
+        "label": "Caption Burner",
+        "agent": "Burns the captions into the vertical video",
+        "engine": "ffmpeg",
+        "subtitleFontSize": 10,
+        "command": "ffmpeg -i {in0} -vf \"subtitles={in1}:force_style='Alignment=2,MarginV=36,FontSize=10,PrimaryColour=&H004BC8F2,OutlineColour=&H00000000,BorderStyle=1,Outline=2'\" {out}"
+      }
+    },
+    {
+      "id": "final",
+      "type": "resource",
+      "data": {
+        "nodeClass": "resource",
+        "label": "Final Reels Video",
+        "media": "video",
+        "filename": "reels_final.mp4",
+        "description": "Vertical 9:16 video with burned-in captions."
       }
     }
   ],
   "edges": [
-    { "source": "master", "target": "track" },
-    { "source": "track", "target": "plan" },
-    { "source": "master", "target": "reframe" },
-    { "source": "plan", "target": "reframe" },
-    { "source": "reframe", "target": "short" }
+    { "source": "source", "target": "reframe" },
+    { "source": "reframe", "target": "vertical" },
+    { "source": "vertical", "target": "audio-extractor" },
+    { "source": "audio-extractor", "target": "audio" },
+    { "source": "audio", "target": "transcriber" },
+    { "source": "transcriber", "target": "captions" },
+    { "source": "vertical", "target": "subtitle-burner" },
+    { "source": "captions", "target": "subtitle-burner" },
+    { "source": "subtitle-burner", "target": "final" }
   ]
 }

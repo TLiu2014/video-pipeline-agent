@@ -26,14 +26,16 @@ export function subtitleBurnCommand(
   srtFiles: string[],
   outFile: string,
   styleFragment: string = subtitleStyleFragment("gold", null),
+  fontSize?: number,
 ): string {
   const BOTTOM = 2; // legacy SSA bottom-center
   const BASE_MARGIN = 36; // px from the bottom for the lowest track
   const LINE_STEP = 54; // extra px per stacked track above it
+  const size = fontSize ? `,FontSize=${fontSize}` : "";
   const chain = srtFiles
     .map((srt, i) => {
       const marginV = BASE_MARGIN + i * LINE_STEP;
-      return `subtitles=${srt}:force_style='Alignment=${BOTTOM},MarginV=${marginV},${styleFragment}'`;
+      return `subtitles=${srt}:force_style='Alignment=${BOTTOM},MarginV=${marginV}${size},${styleFragment}'`;
     })
     .join(",");
   return `${ffmpegBin} -nostdin -y -i ${quote(videoFile)} -vf "${chain}" ${quote(outFile)}`;
@@ -111,6 +113,8 @@ export function applyTemplate(
   if (cmd.startsWith("ffmpeg")) {
     cmd = `${ffmpegBin} -nostdin -y${cmd.slice("ffmpeg".length)}`;
   }
+  // Accept both {in0}/{in1} and {in[0]}/{in[1]} — the model uses either form.
+  cmd = cmd.replace(/\{in\[(\d+)\]\}/g, (_m, i) => quote(inputs[Number(i)] ?? ""));
   cmd = cmd.replace(/\{in(\d+)\}/g, (_m, i) => quote(inputs[Number(i)] ?? ""));
   cmd = cmd.replace(/\{in\}/g, quote(inputs[0] ?? ""));
   cmd = cmd.replace(/\{out\}/g, quote(outFile));
@@ -118,30 +122,33 @@ export function applyTemplate(
 }
 
 /**
- * Build a subject-centered 9:16 crop command from a focal point (0..1). The
- * single-quoted x-expression protects its commas from the filtergraph parser.
+ * Content-preserving 9:16 vertical reframe: fit the WHOLE frame (no crop) over a
+ * blurred, filled copy of itself, so nothing is lost — the standard Reels /
+ * Shorts / TikTok look. (A hard crop would drop the sides of a landscape clip.)
  */
 export function smartReframeCommand(
   ffmpegBin: string,
   videoFile: string,
   outFile: string,
-  focalX: number,
 ): string {
-  const fx = Math.min(1, Math.max(0, focalX));
+  // NOTE: kept as one plain string (no template interpolation / concatenation)
+  // — the SWC minifier was mis-folding the concatenated form and dropping the
+  // gblur/setsar segment from the built bundle.
   const filter =
-    `crop=ih*9/16:ih:x='min(max(${fx}*iw-ih*9/16/2,0),iw-ih*9/16)':y=0,` +
-    `scale=1080:1920`;
+    "split[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2";
   return `${ffmpegBin} -nostdin -y -i ${quote(videoFile)} -vf "${filter}" ${quote(outFile)}`;
 }
 
-/** Parse a crop plan's focalX (0..1) from its JSON text, or null. */
-export function parseFocalX(planJson: string): number | null {
-  try {
-    const fx = Number(JSON.parse(planJson)?.focalX);
-    return Number.isFinite(fx) ? Math.min(1, Math.max(0, fx)) : null;
-  } catch {
-    return null;
-  }
+/** Heuristic: does this ffmpeg op target a 9:16 vertical output? */
+export function wantsVerticalReframe(
+  command: string | undefined,
+  label: string,
+  outFile: string,
+): boolean {
+  const hay = `${command ?? ""} ${label} ${outFile}`;
+  return /vertical|reels?\b|shorts?\b|tiktok|portrait|9\s*[:/]\s*16|1080\s*[:x]\s*1920|ih\s*\*\s*9\s*\/\s*16/i.test(
+    hay,
+  );
 }
 
 /** Which input filenames a (resolved) command actually references. */

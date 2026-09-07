@@ -19,11 +19,12 @@ import {
   applyTemplate,
   bottomLumaProbeCommand,
   parseAvgLuma,
-  parseFocalX,
+  quote,
   referencedInputs,
   smartReframeCommand,
   subtitleBurnCommand,
   subtitleStyleFragment,
+  wantsVerticalReframe,
 } from "./ffmpegCommand";
 import type {
   ExecutorService,
@@ -144,22 +145,20 @@ export class LocalFfmpegRunner implements ExecutorService {
     }
   }
 
-  /** Build the smart-reframe command if a usable crop plan is present. */
-  private async reframeCommand(
-    spec: OperationSpec,
-    outFile: string,
-  ): Promise<string | null> {
-    const planFile = spec.inputs.find((f) => f.endsWith(".json"));
-    if (!planFile) return null;
-    let focal: number | null = null;
-    try {
-      focal = parseFocalX(await readFile(path.join(this.dir, planFile), "utf8"));
-    } catch {
+  /** Content-preserving 9:16 vertical reframe when this op targets a vertical
+   *  output (detected by a crop-plan input or a vertical-looking command). */
+  private reframeCommand(spec: OperationSpec, outFile: string): string | null {
+    if (!VIDEO_RE.test(outFile)) return null;
+    // A subtitle burner (has .srt inputs) is never a reframe, even if its
+    // output is named like a vertical clip ("reels_final.mp4").
+    if (spec.inputs.some((f) => SUBTITLE_RE.test(f))) return null;
+    const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+    if (!video) return null;
+    const hasPlan = spec.inputs.some((f) => f.endsWith(".json"));
+    if (!hasPlan && !wantsVerticalReframe(spec.command, spec.label, outFile)) {
       return null;
     }
-    if (focal == null) return null;
-    const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
-    return smartReframeCommand(this.ffmpegBin, video, outFile, focal);
+    return smartReframeCommand(this.ffmpegBin, video, outFile);
   }
 
   /**
@@ -199,7 +198,14 @@ export class LocalFfmpegRunner implements ExecutorService {
     const style = spec.subtitleStyle ?? "gold";
     const luma = style === "auto" ? await this.probeBottomLuma(video) : null;
     const fragment = subtitleStyleFragment(style, luma);
-    return subtitleBurnCommand(this.ffmpegBin, video, burnFiles, outFile, fragment);
+    return subtitleBurnCommand(
+      this.ffmpegBin,
+      video,
+      burnFiles,
+      outFile,
+      fragment,
+      spec.subtitleFontSize,
+    );
   }
 
   /** Average luma (0..255) of the video's bottom strip, or null if it fails. */
@@ -218,10 +224,13 @@ export class LocalFfmpegRunner implements ExecutorService {
   private async runGemini(spec: OperationSpec): Promise<OperationResult> {
     const subs = spec.outputs.filter((o) => o.media === "subtitle");
     if (subs.length > 0) {
-      // audio in → transcribe; subtitle/text in → translate (model may split
-      // transcription and translation into separate ops).
+      // audio in → transcribe; video in → extract audio then transcribe (the
+      // model often wires the video straight into the transcriber); subtitle in
+      // → translate (model may split transcription and translation).
       const audio = spec.inputs.find((f) => AUDIO_RE.test(f));
       if (audio) return this.runTranscribe(spec, subs, audio);
+      const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+      if (video) return this.runTranscribeFromVideo(spec, subs, video);
       const srtIn = spec.inputs.find((f) => SUBTITLE_RE.test(f));
       if (srtIn) return this.runTranslate(spec, subs, srtIn);
       return skipMissing(spec, spec.inputs.length ? spec.inputs : ["audio"]);
@@ -271,6 +280,27 @@ export class LocalFfmpegRunner implements ExecutorService {
     } catch (err) {
       return geminiSkip(spec.id, err, "transcription");
     }
+  }
+
+  /** Transcriber wired straight to a video: extract its audio, then transcribe. */
+  private async runTranscribeFromVideo(
+    spec: OperationSpec,
+    subs: OperationSpec["outputs"],
+    video: string,
+  ): Promise<OperationResult> {
+    if (!(await exists(path.join(this.dir, video)))) {
+      return skipMissing(spec, [video]);
+    }
+    const audio = `${video}.audio.wav`;
+    try {
+      await execAsync(
+        `${this.ffmpegBin} -nostdin -y -i ${quote(video)} -vn -ac 1 -ar 16000 ${quote(audio)}`,
+        { cwd: this.dir, maxBuffer: 32 * 1024 * 1024, timeout: 5 * 60 * 1000 },
+      );
+    } catch (err) {
+      return geminiSkip(spec.id, err, "audio extraction");
+    }
+    return this.runTranscribe(spec, subs, audio);
   }
 
   /** Translate an existing subtitle into the op's output language(s). */

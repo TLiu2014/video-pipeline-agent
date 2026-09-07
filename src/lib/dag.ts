@@ -1,6 +1,7 @@
 import dagre from "@dagrejs/dagre";
 import subtitleSample from "../../sample/subtitle.json";
 import reframeSample from "../../sample/reframe.json";
+import verticalSample from "../../sample/vertical.json";
 import type {
   GeneratedDag,
   MediaKind,
@@ -172,7 +173,7 @@ export const STATUS_ORDER: NodeStatus[] = [
 ];
 
 /** Selectable starting states, switchable from the settings menu. */
-export type SampleId = "empty" | "subtitle" | "reframe";
+export type SampleId = "empty" | "subtitle" | "reframe" | "vertical";
 
 /** Shape of a `/sample/*.json` flow file: a DAG plus its menu id + label. */
 interface SampleFile extends GeneratedDag {
@@ -184,6 +185,7 @@ interface SampleFile extends GeneratedDag {
 // our sample shape. The flow definitions live in /sample/*.json.
 const SUBTITLE = subtitleSample as unknown as SampleFile;
 const REFRAME = reframeSample as unknown as SampleFile;
+const VERTICAL = verticalSample as unknown as SampleFile;
 
 /**
  * Default demo pipeline ("Bilingual Subtitle Burner"), loaded from
@@ -212,6 +214,7 @@ export interface SampleOption {
 export const SAMPLES: SampleOption[] = [
   { id: SUBTITLE.id, label: SUBTITLE.label, dag: SAMPLE_DAG },
   { id: REFRAME.id, label: REFRAME.label, dag: SAMPLE_DAG_REFRAME },
+  { id: VERTICAL.id, label: VERTICAL.label, dag: VERTICAL },
   { id: "empty", label: "Empty canvas", dag: EMPTY_DAG },
 ];
 

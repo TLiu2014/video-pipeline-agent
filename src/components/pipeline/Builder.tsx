@@ -294,6 +294,9 @@ export function Builder({
     push({ kind: "user", text });
     if (promptOverride === undefined) setPrompt(""); // keep any typed text if a card was clicked
     setLoading(true);
+    // Refine the existing pipeline when one has been built (sample was cleared
+    // to "empty" by a prior generate/import) — follow-up chat updates it in place.
+    const refine = sample === "empty" && nodes.length > 0;
     try {
       const res = await fetch("/api/generate-dag", {
         method: "POST",
@@ -301,7 +304,7 @@ export function Builder({
           "content-type": "application/json",
           ...(apiKey ? { "x-gemini-key": apiKey } : {}),
         },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ prompt: text, current: refine ? dag : undefined }),
       });
       const data: GenerateDagResponse = await res.json();
       if (!res.ok) throw new Error((data as { error?: string }).error);
@@ -311,7 +314,7 @@ export function Builder({
       push({
         kind: "trace",
         status: "done",
-        text: `Built “${data.dag.title}” · ${count} nodes`,
+        text: `${refine ? "Updated" : "Built"} “${data.dag.title}” · ${count} nodes`,
       });
       push({
         kind: "assistant",
@@ -330,7 +333,7 @@ export function Builder({
     } finally {
       setLoading(false);
     }
-  }, [prompt, loading, push, applyDag, apiKey]);
+  }, [prompt, loading, push, applyDag, apiKey, sample, nodes, dag]);
 
   /** Fold a single op's result into its node + downstream resource nodes. */
   const applyOpResult = useCallback(

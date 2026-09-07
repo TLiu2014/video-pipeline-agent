@@ -30,6 +30,8 @@ export interface OperationSpec {
   outputs: OpOutput[];
   /** How to color burned subtitles (burner ops only). Default "gold". */
   subtitleStyle?: SubtitleStyle;
+  /** Explicit subtitle FontSize (ASS force_style) for a burner op; omit = default. */
+  subtitleFontSize?: number;
 }
 
 /** A produced artifact, keyed back to its resource node. */

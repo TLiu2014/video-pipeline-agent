@@ -80,15 +80,32 @@ function validateDag(obj: unknown): GeneratedDag {
 
 /**
  * Run the ADK builder agent on a user prompt and return a validated DAG.
- * Throws if the model is unavailable or returns unparseable output — the caller
- * (API route) decides whether to fall back to the canned sample.
+ * When `current` is provided, the request is treated as a REFINEMENT of the
+ * existing pipeline (the follow-up chat updates it in place) rather than a
+ * fresh build. Throws if the model is unavailable or returns unparseable output.
  */
-export async function generateDag(prompt: string): Promise<GeneratedDag> {
+export async function generateDag(
+  prompt: string,
+  current?: GeneratedDag,
+): Promise<GeneratedDag> {
   const agent = getAgent();
   const runner = new InMemoryRunner({ agent, appName: "video-pipeline-agent" });
+  const text = current
+    ? `You are UPDATING an existing pipeline, not starting over. Here is the current pipeline JSON:
+\`\`\`json
+${JSON.stringify({
+  title: current.title,
+  summary: current.summary,
+  nodes: current.nodes,
+  edges: current.edges,
+})}
+\`\`\`
+
+Apply this change from the user and return the FULL updated pipeline JSON. Keep the parts that still apply, reuse existing node ids where a node is unchanged, and only add / remove / modify nodes and edges as the change requires. Change request: ${prompt}`
+    : prompt;
   const raw = await runToText(runner, "builder", {
     role: "user",
-    parts: [{ text: prompt }],
+    parts: [{ text }],
   });
   if (!raw) throw new Error("model returned empty response");
   const parsed = JSON.parse(unwrapJson(raw));

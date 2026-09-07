@@ -1,0 +1,45 @@
+{
+  "id": "vertical",
+  "label": "Vertical (no captions)",
+  "title": "Content-Safe Vertical Reframe",
+  "summary": "Fit a 16:9 clip into a 9:16 vertical over a blurred background — nothing cropped, no captions. Ready for Reels / Shorts.",
+  "nodes": [
+    {
+      "id": "source",
+      "type": "resource",
+      "data": {
+        "nodeClass": "resource",
+        "label": "Source Video",
+        "media": "video",
+        "filename": "video-clip-1.mp4",
+        "description": "Original 16:9 landscape clip."
+      }
+    },
+    {
+      "id": "reframe",
+      "type": "operation",
+      "data": {
+        "nodeClass": "operation",
+        "label": "Vertical Reframe",
+        "agent": "Fits the full frame into 9:16 over a blurred background (no crop)",
+        "engine": "ffmpeg",
+        "command": "ffmpeg -i {in} -vf \"split[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2\" {out}"
+      }
+    },
+    {
+      "id": "vertical",
+      "type": "resource",
+      "data": {
+        "nodeClass": "resource",
+        "label": "9:16 Vertical Short",
+        "media": "video",
+        "filename": "vertical.mp4",
+        "description": "9:16 video, full content preserved."
+      }
+    }
+  ],
+  "edges": [
+    { "source": "source", "target": "reframe" },
+    { "source": "reframe", "target": "vertical" }
+  ]
+}
