@@ -39,7 +39,7 @@ async function handle(prompt: string) {
     const res: GenerateDagResponse = {
       dag: SAMPLE_DAG,
       fallback: true,
-      note: "No GOOGLE_API_KEY configured — showing a sample pipeline. Add a key to .env.local to generate from your prompt.",
+      note: "No Gemini API key configured — showing a sample pipeline. Add GEMINI_API_KEY to .env.local (or your key in Settings) to generate from your prompt.",
     };
     return NextResponse.json(res);
   }

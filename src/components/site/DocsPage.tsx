@@ -129,7 +129,7 @@ export default function DocsPage() {
                 <p>
                   Only <b>FFmpeg</b> is offloaded to Replit in cloud mode; the{" "}
                   <b>Gemini</b> calls always run on the Next server, so your{" "}
-                  <Code>GOOGLE_API_KEY</Code> never leaves your machine.
+                  <Code>GEMINI_API_KEY</Code> never leaves your machine.
                 </p>
               </Prose>
             </section>
@@ -280,7 +280,7 @@ export default function DocsPage() {
                   Replit&apos;s platform, no separate service needed. (The
                   optional <Code>deploy/replit-executor</Code> is only for the
                   split setup: app elsewhere, FFmpeg offloaded to Replit over
-                  HTTP.) The <Code>GOOGLE_API_KEY</Code> lives in Replit{" "}
+                  HTTP.) The <Code>GEMINI_API_KEY</Code> lives in Replit{" "}
                   <b>Secrets</b>; at runtime CineDAG doesn&apos;t call a Replit AI
                   agent. Full walkthrough:{" "}
                   <a

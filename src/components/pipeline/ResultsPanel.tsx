@@ -38,6 +38,10 @@ interface ResultsPanelProps {
   onSourceLoaded: (s: LoadedSource) => void;
   onClearSource: () => void;
   maxUploadMb: number;
+  /** Re-run the pipeline from a given node (e.g. re-burn after editing subs). */
+  onReburn?: (nodeId: string) => void;
+  /** True while a run/re-run is in progress. */
+  running?: boolean;
 }
 
 /**
@@ -56,6 +60,8 @@ export function ResultsPanel({
   onSourceLoaded,
   onClearSource,
   maxUploadMb,
+  onReburn,
+  running,
 }: ResultsPanelProps) {
   const isSources = activeId === SOURCES_TAB;
   const active = isSources
@@ -182,7 +188,11 @@ export function ResultsPanel({
             </p>
           </div>
         ) : active.media === "subtitle" || active.media === "text" ? (
-          <SubtitleEditor url={active.url} />
+          <SubtitleEditor
+            url={active.url}
+            onReburn={onReburn ? () => onReburn(active.id) : undefined}
+            reburning={running}
+          />
         ) : active.media === "image" ? (
           <div className="flex h-full items-center justify-center p-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}

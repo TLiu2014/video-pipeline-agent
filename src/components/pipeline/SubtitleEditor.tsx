@@ -1,10 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Save } from "lucide-react";
+import { Check, Clapperboard, Loader2, Save } from "lucide-react";
 
 /** Load, edit and save a subtitle (.srt/.vtt) file served under /renders. */
-export function SubtitleEditor({ url }: { url: string }) {
+export function SubtitleEditor({
+  url,
+  onReburn,
+  reburning,
+}: {
+  url: string;
+  /** Re-run the burn (+ downstream) using the saved subtitle — no Gemini. */
+  onReburn?: () => void;
+  reburning?: boolean;
+}) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -33,24 +42,35 @@ export function SubtitleEditor({ url }: { url: string }) {
     };
   }, [url]);
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true);
     setError(null);
     try {
       const res = await fetch("/api/subtitle", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url, content }),
+        // Strip the cache-bust query — the writer needs the clean file path.
+        body: JSON.stringify({ url: url.split("?")[0], content }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Save failed");
       setDirty(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  // Save any pending edits, then re-burn the video from this subtitle onward
+  // (ffmpeg only — Gemini transcription is NOT re-run, so edits are preserved).
+  const saveAndReburn = async () => {
+    if (!onReburn) return;
+    if (dirty && !(await save())) return;
+    onReburn();
   };
 
   return (
@@ -59,21 +79,39 @@ export function SubtitleEditor({ url }: { url: string }) {
         <span className="truncate font-mono text-[11px] text-slate-400">
           {url}
         </span>
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || loading || !dirty}
-          className="inline-flex items-center gap-1.5 rounded-md bg-indigo-500 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : saved ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || loading || !dirty}
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : saved ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {saved ? "Saved" : "Save"}
+          </button>
+          {onReburn && (
+            <button
+              type="button"
+              onClick={saveAndReburn}
+              disabled={saving || loading || reburning}
+              title="Save edits and re-render the video from here (FFmpeg only — no Gemini)"
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-500 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reburning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Clapperboard className="h-3.5 w-3.5" />
+              )}
+              {reburning ? "Re-burning…" : "Save & re-burn"}
+            </button>
           )}
-          {saved ? "Saved" : "Save"}
-        </button>
+        </div>
       </div>
       {loading ? (
         <div className="flex flex-1 items-center justify-center text-sm text-slate-400">

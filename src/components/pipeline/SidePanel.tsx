@@ -1,15 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  Check,
-  Loader2,
-  Play,
-  RotateCcw,
-  Send,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { Check, Loader2, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { PROMPT_TEMPLATES } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 import { SourceLoader } from "./SourceLoader";
@@ -31,15 +23,13 @@ export interface TraceEntry {
 interface SidePanelProps {
   prompt: string;
   onPromptChange: (v: string) => void;
-  onGenerate: () => void;
-  onRun: () => void;
-  onReset: () => void;
+  /** Build a pipeline from the composer text, or from an explicit prompt. */
+  onGenerate: (prompt?: string) => void;
+  /** Start fresh: clear the trace AND reset the pipeline to the chosen sample. */
+  onNewChat: () => void;
   loading: boolean;
   running: boolean;
   entries: TraceEntry[];
-  executionMode: string;
-  /** Whether the canvas currently has a runnable pipeline. */
-  canRun: boolean;
   source: LoadedSource | null;
   onSourceLoaded: (s: LoadedSource) => void;
   maxUploadMb: number;
@@ -56,13 +46,10 @@ export function SidePanel({
   prompt,
   onPromptChange,
   onGenerate,
-  onRun,
-  onReset,
+  onNewChat,
   loading,
   running,
   entries,
-  executionMode,
-  canRun,
   source,
   onSourceLoaded,
   maxUploadMb,
@@ -93,17 +80,16 @@ export function SidePanel({
             Pipeline Agent
           </span>
         </div>
-        {entries.length > 0 && (
-          <button
-            type="button"
-            onClick={onReset}
-            title="Clear the trace"
-            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Clear
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onNewChat}
+          disabled={busy}
+          title="New chat — clear the trace and reset the pipeline to the selected sample"
+          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <RotateCcw className="h-3 w-3" />
+          New chat
+        </button>
       </header>
 
       {/* Source loader (toggle in settings) */}
@@ -120,38 +106,10 @@ export function SidePanel({
         </div>
       )}
 
-      {/* Run control */}
-      <div className="shrink-0 border-b border-slate-200 p-3 dark:border-slate-800">
-        <button
-          type="button"
-          onClick={onRun}
-          disabled={busy || !canRun}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {running ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4" />
-          )}
-          {running ? "Running…" : "Run Pipeline"}
-        </button>
-        <div className="mt-1.5 text-center text-[11px] text-slate-400">
-          Executes on{" "}
-          <span className="font-medium text-slate-500 dark:text-slate-300">
-            {executionMode === "replit" ? "Replit Cloud" : "Local FFmpeg"}
-          </span>
-        </div>
-      </div>
-
       {/* Trace / chat timeline */}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {entries.length === 0 ? (
-          <EmptyChips
-            onPick={(p) => {
-              onPromptChange(p);
-              inputRef.current?.focus();
-            }}
-          />
+          <EmptyChips onPick={(p) => onGenerate(p)} busy={loading} />
         ) : (
           <div className="flex flex-col gap-2">
             {entries.map((e) => (
@@ -196,18 +154,25 @@ export function SidePanel({
   );
 }
 
-function EmptyChips({ onPick }: { onPick: (prompt: string) => void }) {
+function EmptyChips({
+  onPick,
+  busy,
+}: {
+  onPick: (prompt: string) => void;
+  busy?: boolean;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-slate-400">
-        Try one of these, or describe your own workflow below:
+        Click one to have Gemini build it, or describe your own workflow below:
       </p>
       {PROMPT_TEMPLATES.map((t) => (
         <button
           key={t.label}
           type="button"
+          disabled={busy}
           onClick={() => onPick(t.prompt)}
-          className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-indigo-600 dark:hover:bg-indigo-950/40"
+          className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-indigo-600 dark:hover:bg-indigo-950/40"
         >
           <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
             {t.label}

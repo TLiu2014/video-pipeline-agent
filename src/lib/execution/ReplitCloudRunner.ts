@@ -4,22 +4,31 @@ import { RENDERS_DIR, ensureMediaDirs, toPublicUrl } from "@/lib/media";
 import {
   langFromFilename,
   languageName,
+  mergeSrt,
   toSrt,
   transcribeAudio,
+  translateSrt,
 } from "@/lib/agent/transcribe";
 import { analyzeReframe } from "@/lib/agent/reframe";
 import {
+  AUDIO_RE,
+  SUBTITLE_RE,
   VIDEO_RE,
   applyTemplate,
+  bottomLumaProbeCommand,
+  parseAvgLuma,
   parseFocalX,
   referencedInputs,
   smartReframeCommand,
+  subtitleBurnCommand,
+  subtitleStyleFragment,
 } from "./ffmpegCommand";
 import {
   errResult,
   exists,
   geminiSkip,
   skipMissing,
+  subtitleInputs,
 } from "./LocalFfmpegRunner";
 import type {
   ExecutorService,
@@ -168,6 +177,49 @@ export class ReplitCloudRunner implements ExecutorService {
 
     let command = await this.reframeCommand(spec, out.filename);
     if (!command) {
+      const srts = subtitleInputs(spec);
+      const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+      if (srts.length && video && VIDEO_RE.test(out.filename)) {
+        // Deterministic subtitle burn (correct, version-stable alignment) on
+        // the tracks the executor actually produced.
+        const present: string[] = [];
+        for (const s of srts) if (await this.remoteExists(s)) present.push(s);
+        if (!present.length) return skipMissing(spec, srts);
+        // Multiple languages → merge into one 2-line subtitle (adjacent lines,
+        // last track on top), upload it, and burn that single file.
+        let burnFiles = present;
+        if (present.length > 1) {
+          const contents = await Promise.all(
+            present.map((f) => this.remoteDownload(f)),
+          );
+          const texts = contents.map((b) => (b ? b.toString("utf8") : ""));
+          const merged = mergeSrt([...texts].reverse());
+          const mergedName = `${out.filename}._subs.srt`;
+          await this.remoteUpload(mergedName, Buffer.from(merged, "utf8"));
+          burnFiles = [mergedName];
+        }
+        const style = spec.subtitleStyle ?? "gold";
+        let luma: number | null = null;
+        if (style === "auto") {
+          try {
+            const probe = await this.remoteExec(
+              bottomLumaProbeCommand(this.ffmpegBin, video),
+            );
+            luma = parseAvgLuma(probe.stderr || probe.stdout || "");
+          } catch {
+            luma = null;
+          }
+        }
+        command = subtitleBurnCommand(
+          this.ffmpegBin,
+          video,
+          burnFiles,
+          out.filename,
+          subtitleStyleFragment(style, luma),
+        );
+      }
+    }
+    if (!command) {
       if (!spec.command)
         return errResult(spec.id, "ffmpeg operation missing command");
       command = applyTemplate(
@@ -241,7 +293,13 @@ export class ReplitCloudRunner implements ExecutorService {
 
   private async runGemini(spec: OperationSpec): Promise<OperationResult> {
     const subs = spec.outputs.filter((o) => o.media === "subtitle");
-    if (subs.length > 0) return this.runTranscribe(spec, subs);
+    if (subs.length > 0) {
+      const audio = spec.inputs.find((f) => AUDIO_RE.test(f));
+      if (audio) return this.runTranscribe(spec, subs, audio);
+      const srtIn = spec.inputs.find((f) => SUBTITLE_RE.test(f));
+      if (srtIn) return this.runTranslate(spec, subs, srtIn);
+      return skipMissing(spec, spec.inputs.length ? spec.inputs : ["audio"]);
+    }
     const plan = spec.outputs.find((o) => o.media === "text");
     if (plan) return this.runReframeAnalysis(spec, plan);
     return {
@@ -253,13 +311,48 @@ export class ReplitCloudRunner implements ExecutorService {
     };
   }
 
+  /** Translate an existing subtitle (pulled from the executor) into the op's
+   *  output language(s), pushing the results back. */
+  private async runTranslate(
+    spec: OperationSpec,
+    subs: OperationSpec["outputs"],
+    srtIn: string,
+  ): Promise<OperationResult> {
+    const buf = await this.remoteDownload(srtIn);
+    if (!buf) return skipMissing(spec, [srtIn]);
+    const langs = subs.map((o) => langFromFilename(o.filename));
+    try {
+      const segments = await translateSrt(buf.toString("utf8"), langs);
+      const produced: ProducedArtifact[] = [];
+      for (const o of subs) {
+        const srt = toSrt(segments, langFromFilename(o.filename));
+        await writeFile(path.join(this.localDir, o.filename), srt, "utf8");
+        await this.remoteUpload(o.filename, Buffer.from(srt, "utf8"));
+        produced.push({
+          id: o.id,
+          filename: o.filename,
+          url: this.urlFor(o.filename),
+        });
+      }
+      return {
+        id: spec.id,
+        ok: true,
+        logs: `[gemini→replit] translated ${srtIn} → ${langs
+          .map(languageName)
+          .join(", ")}`,
+        produced,
+      };
+    } catch (err) {
+      return geminiSkip(spec.id, err, "translation");
+    }
+  }
+
   /** Transcribe locally (input pulled from the executor, subs pushed back). */
   private async runTranscribe(
     spec: OperationSpec,
     subs: OperationSpec["outputs"],
+    audio: string,
   ): Promise<OperationResult> {
-    const audio = spec.inputs[0];
-    if (!audio) return errResult(spec.id, "no audio input for transcription");
     try {
       const localAudio = await this.ensureLocal(audio);
       const langs = subs.map((o) => langFromFilename(o.filename));

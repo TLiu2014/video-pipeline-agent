@@ -50,7 +50,7 @@ export interface OperationNodeData extends Record<string, unknown> {
   status: NodeStatus;
   /** Hard failure message (shown red). */
   error?: string | null;
-  /** Informational skip reason (shown amber), e.g. "no GOOGLE_API_KEY". */
+  /** Informational skip reason (shown amber), e.g. "no Gemini API key". */
   note?: string | null;
 }
 

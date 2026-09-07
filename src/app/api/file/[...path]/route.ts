@@ -46,13 +46,20 @@ export async function GET(
     return new Response("Forbidden", { status: 403 });
   }
 
+  // Never let a transient 404 (file still being produced) get cached.
+  const notFound = () =>
+    new Response("Not found", {
+      status: 404,
+      headers: { "cache-control": "no-store" },
+    });
+
   let size: number;
   try {
     const s = await stat(abs);
-    if (!s.isFile()) return new Response("Not found", { status: 404 });
+    if (!s.isFile()) return notFound();
     size = s.size;
   } catch {
-    return new Response("Not found", { status: 404 });
+    return notFound();
   }
 
   const type = CONTENT_TYPES[path.extname(abs).toLowerCase()] ??

@@ -50,7 +50,7 @@
         "label": "Subtitle Burner",
         "agent": "Burns both subtitle tracks into the video frame",
         "engine": "ffmpeg",
-        "command": "ffmpeg -i {in} -vf \"subtitles=subs.en.srt:force_style='Alignment=2',subtitles=subs.zh.srt:force_style='Alignment=8'\" {out}"
+        "command": "ffmpeg -i {in} -vf \"subtitles=subs.en.srt:force_style='Alignment=2,MarginV=36,PrimaryColour=&H004BC8F2,OutlineColour=&H00000000,BorderStyle=1,Outline=2',subtitles=subs.zh.srt:force_style='Alignment=2,MarginV=90,PrimaryColour=&H004BC8F2,OutlineColour=&H00000000,BorderStyle=1,Outline=2'\" {out}"
       }
     },
     {

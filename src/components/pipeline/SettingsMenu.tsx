@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { SAMPLES, type SampleId } from "@/lib/dag";
 
 export type ResultsLayout = "hidden" | "top" | "right" | "bottom";
+export type SubtitleStyle = "gold" | "white" | "cyan" | "auto";
 
 export interface AppSettings {
   /** Animate media flowing along edges. */
@@ -35,6 +36,8 @@ export interface AppSettings {
   followActive: boolean;
   /** Show the source-loader controls in the left side panel. */
   showSourceLoader: boolean;
+  /** How burned subtitles are colored. */
+  subtitleStyle: SubtitleStyle;
 }
 
 interface SettingsMenuProps {
@@ -88,10 +91,13 @@ export function SettingsMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
+    // Capture phase: React Flow calls stopPropagation on the pane's mousedown,
+    // so a bubble-phase listener would miss clicks on the canvas. Capturing at
+    // the document lets us close before that handler runs.
+    document.addEventListener("mousedown", onDown, true);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("mousedown", onDown, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -137,6 +143,15 @@ export function SettingsMenu({
               <X className="h-4 w-4" />
             </button>
           </div>
+
+          {/* Gemini API key (BYOK) — first, so it's the primary action */}
+          <Section label="Gemini API key">
+            <ApiKeyInput
+              currentApiKey={apiKey}
+              onApiKeySet={onApiKeySet}
+              hasServerKey={hasServerKey}
+            />
+          </Section>
 
           {/* Appearance */}
           <Section label="Appearance">
@@ -220,6 +235,47 @@ export function SettingsMenu({
               checked={settings.showSourceLoader}
               onChange={(v) => onChange({ showSourceLoader: v })}
             />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                Subtitle color
+              </span>
+              <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+                {(
+                  [
+                    ["gold", "Gold", "#F2C84B"],
+                    ["white", "White", "#FFFFFF"],
+                    ["cyan", "Cyan", "#00E5FF"],
+                    ["auto", "Auto", null],
+                  ] as [SubtitleStyle, string, string | null][]
+                ).map(([v, label, swatch]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => onChange({ subtitleStyle: v })}
+                    aria-pressed={settings.subtitleStyle === v}
+                    title={
+                      v === "auto"
+                        ? "Pick text color from the video's brightness"
+                        : `${label} text with a black outline`
+                    }
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
+                      settings.subtitleStyle === v
+                        ? "bg-indigo-500 text-white"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100",
+                    )}
+                  >
+                    {swatch && (
+                      <span
+                        className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20"
+                        style={{ background: swatch }}
+                      />
+                    )}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </Section>
 
           {/* Sample pipeline */}
@@ -255,11 +311,6 @@ export function SettingsMenu({
               label="Model"
               value={model}
               hint="Google ADK · Gemini"
-            />
-            <ApiKeyInput
-              currentApiKey={apiKey}
-              onApiKeySet={onApiKeySet}
-              hasServerKey={hasServerKey}
             />
             <InfoRow
               icon={isReplit ? Server : MonitorSmartphone}

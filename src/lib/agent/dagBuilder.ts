@@ -1,13 +1,16 @@
 import { LlmAgent, InMemoryRunner, Gemini } from "@google/adk";
 import type { GeneratedDag } from "@/lib/types";
 import { DAG_BUILDER_INSTRUCTION } from "./systemPrompt";
-import { clientApiKey } from "./keyContext";
+import { isConfigured, resolveModelConfig } from "./keyContext";
+import { runToText } from "./adkRun";
 
-/** True when a Gemini/Google API key is available — BYOK (this request) or env. */
+/**
+ * True when Gemini is reachable via ANY backend, in priority order:
+ * BYOK (this request) → Vertex AI (ADC) → server GEMINI_API_KEY/GOOGLE_API_KEY.
+ * See resolveModelConfig() in keyContext.ts.
+ */
 export function hasApiKey(): boolean {
-  return Boolean(
-    clientApiKey() || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY,
-  );
+  return isConfigured();
 }
 
 export function geminiModel(): string {
@@ -15,14 +18,14 @@ export function geminiModel(): string {
 }
 
 /**
- * The `model` to hand an LlmAgent. With a BYOK key present, bind an explicit
- * Gemini instance to it; otherwise pass the model name string and let
- * @google/genai resolve the key from GOOGLE_API_KEY / GEMINI_API_KEY in env
- * (its constructor requires an explicit key, so we only build it for BYOK).
+ * The `model` to hand an LlmAgent. Bind an explicit Gemini instance to the
+ * resolved backend — a BYOK/env key (AI Studio) or Vertex AI (ADC, no key) —
+ * by spreading the ModelConfig into the ctor. Falls back to the model-name
+ * string only when nothing is configured (callers gate on hasApiKey() first).
  */
 export function geminiModelParam(): string | Gemini {
-  const key = clientApiKey();
-  return key ? new Gemini({ model: geminiModel(), apiKey: key }) : geminiModel();
+  const cfg = resolveModelConfig();
+  return cfg ? new Gemini({ model: geminiModel(), ...cfg }) : geminiModel();
 }
 
 /** Build the DAG-builder LlmAgent (per call — the resolved key can vary). */
@@ -32,33 +35,23 @@ function getAgent(): LlmAgent {
     model: geminiModelParam(),
     description:
       "Plans a strictly-alternating Resource/Operation video-processing DAG from a natural-language request.",
-    instruction: DAG_BUILDER_INSTRUCTION,
+    // Function form (not string) so the ADK does NOT run {var} state-injection
+    // templating — our instruction contains literal braces ({in}/{out}, JSON).
+    instruction: () => DAG_BUILDER_INSTRUCTION,
     // Force raw JSON out of the model; we parse it ourselves. No tools are used,
     // so a JSON response mime type is safe here.
     generateContentConfig: {
       responseMimeType: "application/json",
       temperature: 0.4,
+      // Disable "thinking": these are structured-extraction tasks that don't
+      // need chain-of-thought, and on thinking models (gemini-2.5+/3.x) the
+      // hidden reasoning can consume the output budget and return an empty
+      // answer. Off = the whole budget goes to the JSON we actually want.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 }
 
-/** Pull all model text out of an ADK event stream. */
-async function collectText(
-  runner: InMemoryRunner,
-  prompt: string,
-): Promise<string> {
-  let text = "";
-  for await (const event of runner.runEphemeral({
-    userId: "builder",
-    newMessage: { role: "user", parts: [{ text: prompt }] },
-  })) {
-    const parts = event.content?.parts ?? [];
-    for (const p of parts) {
-      if (typeof p.text === "string") text += p.text;
-    }
-  }
-  return text.trim();
-}
 
 /** Strip ```json fences if the model wraps its output despite instructions. */
 function unwrapJson(raw: string): string {
@@ -93,7 +86,10 @@ function validateDag(obj: unknown): GeneratedDag {
 export async function generateDag(prompt: string): Promise<GeneratedDag> {
   const agent = getAgent();
   const runner = new InMemoryRunner({ agent, appName: "video-pipeline-agent" });
-  const raw = await collectText(runner, prompt);
+  const raw = await runToText(runner, "builder", {
+    role: "user",
+    parts: [{ text: prompt }],
+  });
   if (!raw) throw new Error("model returned empty response");
   const parsed = JSON.parse(unwrapJson(raw));
   return validateDag(parsed);

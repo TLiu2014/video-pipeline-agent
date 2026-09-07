@@ -6,16 +6,24 @@ import { RENDERS_DIR, ensureMediaDirs, toPublicUrl } from "@/lib/media";
 import {
   langFromFilename,
   languageName,
+  mergeSrt,
   toSrt,
   transcribeAudio,
+  translateSrt,
 } from "@/lib/agent/transcribe";
 import { analyzeReframe } from "@/lib/agent/reframe";
 import {
+  AUDIO_RE,
+  SUBTITLE_RE,
   VIDEO_RE,
   applyTemplate,
+  bottomLumaProbeCommand,
+  parseAvgLuma,
   parseFocalX,
   referencedInputs,
   smartReframeCommand,
+  subtitleBurnCommand,
+  subtitleStyleFragment,
 } from "./ffmpegCommand";
 import type {
   ExecutorService,
@@ -31,7 +39,7 @@ const execAsync = promisify(exec);
  *
  * - "ffmpeg" ops are executed for real via child_process.
  * - "gemini" ops produce real subtitles (transcription) or a reframe crop plan
- *   (needs GOOGLE_API_KEY); they skip cleanly without a key.
+ *   (needs a Gemini API key); they skip cleanly without a key.
  * - "tts" ops are stubbed (wire a TTS service here for AI dubbing).
  */
 export class LocalFfmpegRunner implements ExecutorService {
@@ -69,8 +77,14 @@ export class LocalFfmpegRunner implements ExecutorService {
       return errResult(spec.id, "ffmpeg operation has no output");
     }
 
-    // Smart reframe when a crop plan exists; else the op's own (dumb) command.
+    // Smart reframe when a crop plan exists; else a deterministic subtitle burn
+    // when this is a burner op; else the op's own (model-authored) command.
     let command = await this.reframeCommand(spec, out.filename);
+    if (!command) {
+      const burn = await this.subtitleBurnCommand(spec, out.filename);
+      if (burn === "no-subs") return skipMissing(spec, subtitleInputs(spec));
+      if (burn) command = burn;
+    }
     if (!command) {
       if (!spec.command)
         return errResult(spec.id, "ffmpeg operation missing command");
@@ -106,11 +120,25 @@ export class LocalFfmpegRunner implements ExecutorService {
       };
     } catch (err) {
       const e = err as { stderr?: string; message?: string };
+      const stderr = e.stderr ?? "";
+      // A common local-setup gotcha: the `subtitles`/`ass` filters need an
+      // ffmpeg built with libass. A build without it can't burn subtitles and
+      // fails with a cryptic "Unknown filter" / "No option name" — surface the
+      // real fix instead.
+      const usesLibass = /\b(subtitles|ass)=/.test(command);
+      const noFilter =
+        /Unknown filter '(subtitles|ass)'|No such filter|No option name/i.test(
+          stderr,
+        );
+      const error =
+        usesLibass && noFilter
+          ? "This ffmpeg build lacks libass, required to burn subtitles. Reinstall with libass (macOS: `brew reinstall ffmpeg`; verify: `ffmpeg -filters | grep subtitles`)."
+          : e.message ?? "ffmpeg failed";
       return {
         id: spec.id,
         ok: false,
-        error: e.message ?? "ffmpeg failed",
-        logs: `$ ${command}\n${e.stderr ?? ""}`.trim(),
+        error,
+        logs: `$ ${command}\n${stderr}`.trim(),
         produced: [],
       };
     }
@@ -134,9 +162,70 @@ export class LocalFfmpegRunner implements ExecutorService {
     return smartReframeCommand(this.ffmpegBin, video, outFile, focal);
   }
 
+  /**
+   * Deterministic subtitle burn when this op takes subtitle track(s) + a video
+   * and outputs a video. Returns the command, "no-subs" when none of the
+   * subtitle tracks were produced (so the op should skip), or null when this
+   * isn't a burner op (fall through to the model's command).
+   */
+  private async subtitleBurnCommand(
+    spec: OperationSpec,
+    outFile: string,
+  ): Promise<string | "no-subs" | null> {
+    const srts = subtitleInputs(spec);
+    const video = spec.inputs.find((f) => VIDEO_RE.test(f));
+    if (!srts.length || !video || !VIDEO_RE.test(outFile)) return null;
+    const present: string[] = [];
+    for (const s of srts) {
+      if (await exists(path.join(this.dir, s))) present.push(s);
+    }
+    if (!present.length) return "no-subs";
+    // Multiple languages → merge into one 2-line subtitle so they render on
+    // adjacent lines (reversed so the last track sits on the top line, e.g.
+    // Chinese above English). One language → burn it as-is.
+    let burnFiles = present;
+    if (present.length > 1) {
+      const contents = await Promise.all(
+        present.map((f) => readFile(path.join(this.dir, f), "utf8")),
+      );
+      const mergedName = `${outFile}._subs.srt`;
+      await writeFile(
+        path.join(this.dir, mergedName),
+        mergeSrt([...contents].reverse()),
+        "utf8",
+      );
+      burnFiles = [mergedName];
+    }
+    const style = spec.subtitleStyle ?? "gold";
+    const luma = style === "auto" ? await this.probeBottomLuma(video) : null;
+    const fragment = subtitleStyleFragment(style, luma);
+    return subtitleBurnCommand(this.ffmpegBin, video, burnFiles, outFile, fragment);
+  }
+
+  /** Average luma (0..255) of the video's bottom strip, or null if it fails. */
+  private async probeBottomLuma(video: string): Promise<number | null> {
+    try {
+      const { stderr } = await execAsync(
+        bottomLumaProbeCommand(this.ffmpegBin, video),
+        { cwd: this.dir, maxBuffer: 8 * 1024 * 1024, timeout: 30_000 },
+      );
+      return parseAvgLuma(stderr);
+    } catch {
+      return null;
+    }
+  }
+
   private async runGemini(spec: OperationSpec): Promise<OperationResult> {
     const subs = spec.outputs.filter((o) => o.media === "subtitle");
-    if (subs.length > 0) return this.runTranscribe(spec, subs);
+    if (subs.length > 0) {
+      // audio in → transcribe; subtitle/text in → translate (model may split
+      // transcription and translation into separate ops).
+      const audio = spec.inputs.find((f) => AUDIO_RE.test(f));
+      if (audio) return this.runTranscribe(spec, subs, audio);
+      const srtIn = spec.inputs.find((f) => SUBTITLE_RE.test(f));
+      if (srtIn) return this.runTranslate(spec, subs, srtIn);
+      return skipMissing(spec, spec.inputs.length ? spec.inputs : ["audio"]);
+    }
     const plan = spec.outputs.find((o) => o.media === "text");
     if (plan) return this.runReframeAnalysis(spec, plan);
     return {
@@ -151,9 +240,13 @@ export class LocalFfmpegRunner implements ExecutorService {
   private async runTranscribe(
     spec: OperationSpec,
     subs: OperationSpec["outputs"],
+    audio: string,
   ): Promise<OperationResult> {
-    const audio = spec.inputs[0];
-    if (!audio) return errResult(spec.id, "no audio input for transcription");
+    // The audio wasn't produced (upstream skipped, e.g. no source video) —
+    // skip cleanly (amber) rather than erroring on a missing file.
+    if (!(await exists(path.join(this.dir, audio)))) {
+      return skipMissing(spec, [audio]);
+    }
     const langs = subs.map((o) => langFromFilename(o.filename));
     try {
       const segments = await transcribeAudio(path.join(this.dir, audio), langs);
@@ -180,12 +273,50 @@ export class LocalFfmpegRunner implements ExecutorService {
     }
   }
 
+  /** Translate an existing subtitle into the op's output language(s). */
+  private async runTranslate(
+    spec: OperationSpec,
+    subs: OperationSpec["outputs"],
+    srtIn: string,
+  ): Promise<OperationResult> {
+    const abs = path.join(this.dir, srtIn);
+    if (!(await exists(abs))) return skipMissing(spec, [srtIn]);
+    const langs = subs.map((o) => langFromFilename(o.filename));
+    try {
+      const segments = await translateSrt(await readFile(abs, "utf8"), langs);
+      const produced: ProducedArtifact[] = [];
+      for (const o of subs) {
+        const srt = toSrt(segments, langFromFilename(o.filename));
+        await writeFile(path.join(this.dir, o.filename), srt, "utf8");
+        produced.push({
+          id: o.id,
+          filename: o.filename,
+          url: this.urlFor(o.filename),
+        });
+      }
+      return {
+        id: spec.id,
+        ok: true,
+        logs: `[gemini] translated ${srtIn} → ${langs
+          .map(languageName)
+          .join(", ")}`,
+        produced,
+      };
+    } catch (err) {
+      return geminiSkip(spec.id, err, "translation");
+    }
+  }
+
   private async runReframeAnalysis(
     spec: OperationSpec,
     planOut: OperationSpec["outputs"][number],
   ): Promise<OperationResult> {
     const video = spec.inputs.find((f) => VIDEO_RE.test(f)) ?? spec.inputs[0];
     if (!video) return errResult(spec.id, "no video input for reframe analysis");
+    // Source video wasn't staged — skip cleanly rather than error on a missing file.
+    if (!(await exists(path.join(this.dir, video)))) {
+      return skipMissing(spec, [video]);
+    }
     try {
       const plan = await analyzeReframe(path.join(this.dir, video));
       await writeFile(
@@ -229,6 +360,11 @@ export function errResult(id: string, error: string): OperationResult {
   return { id, ok: false, error, logs: "", produced: [] };
 }
 
+/** Subtitle-track inputs (.srt/.ass/.vtt) of an op, in upstream order. */
+export function subtitleInputs(spec: OperationSpec): string[] {
+  return spec.inputs.filter((f) => SUBTITLE_RE.test(f));
+}
+
 export function skipMissing(
   spec: OperationSpec,
   missing: string[],
@@ -256,7 +392,7 @@ export function geminiSkip(
     ok: false,
     skipped: !process.env.GOOGLE_API_KEY && !process.env.GEMINI_API_KEY,
     error: msg,
-    logs: `[gemini] ${msg} — set GOOGLE_API_KEY to enable ${what}.`,
+    logs: `[gemini] ${msg} — set GEMINI_API_KEY to enable ${what}.`,
     produced: [],
   };
 }

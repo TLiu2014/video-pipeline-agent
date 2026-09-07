@@ -4,9 +4,11 @@ import {
   getExecutor,
   type OperationSpec,
 } from "@/lib/execution";
-import type { OpOutput } from "@/lib/execution/types";
+import type { OpOutput, SubtitleStyle } from "@/lib/execution/types";
 import { apiKeyFromRequest, runWithApiKey } from "@/lib/agent/keyContext";
-import { ensureMediaDirs, fromPublicUrl } from "@/lib/media";
+import { RENDERS_DIR, ensureMediaDirs, fromPublicUrl } from "@/lib/media";
+import { unlink } from "node:fs/promises";
+import path from "node:path";
 import type { GeneratedDag, MediaKind } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -23,10 +25,18 @@ export async function POST(req: Request) {
   const clientKey = apiKeyFromRequest(req);
   let dag: GeneratedDag | undefined;
   let sourceUrl: string | null = null;
+  let subtitleStyle: SubtitleStyle = "gold";
+  let fromNode: string | null = null;
   try {
     const body = await req.json();
     dag = body?.dag as GeneratedDag | undefined;
     sourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl : null;
+    if (["gold", "white", "cyan", "auto"].includes(body?.subtitleStyle)) {
+      subtitleStyle = body.subtitleStyle;
+    }
+    // Partial re-run: only run ops downstream of this node (e.g. after editing
+    // a subtitle — re-burn without re-running Gemini/earlier steps).
+    fromNode = typeof body?.fromNode === "string" ? body.fromNode : null;
   } catch {
     /* handled below */
   }
@@ -60,13 +70,35 @@ export async function POST(req: Request) {
   await ensureMediaDirs();
   const executor = getExecutor();
 
+  // Full run: wipe this pipeline's prior artifacts so a run can't "pass" a node
+  // by reusing a stale file (e.g. running with no source video shouldn't leave
+  // last run's audio/subs around making downstream nodes look done). A partial
+  // re-run (fromNode) deliberately KEEPS upstream files.
+  if (!fromNode) {
+    await Promise.all(
+      [...new Set(filenameOf.values())].map((f) =>
+        unlink(path.join(RENDERS_DIR, f)).catch(() => {}),
+      ),
+    );
+  }
+
   // Stage the loaded source into the working dir under each root resource's
   // filename (copied locally, or uploaded to the Replit executor).
   if (sourceUrl) {
     const abs = fromPublicUrl(sourceUrl);
     if (abs) {
+      // Stage into (a) whatever resource the client bound the source to
+      // (its outputUrl === the sourceUrl), plus (b) any root resource with no
+      // incoming edge. (a) is robust even if the model wired the source node
+      // with a stray edge so it isn't a clean root.
+      const cleanUrl = sourceUrl.split("?")[0];
       const roots = dag.nodes.filter(
-        (n) => n.type === "resource" && !(upstream.get(n.id)?.length ?? 0),
+        (n) =>
+          n.type === "resource" &&
+          (String((n.data as { outputUrl?: string }).outputUrl ?? "").split(
+            "?",
+          )[0] === cleanUrl ||
+            !(upstream.get(n.id)?.length ?? 0)),
       );
       await Promise.all(
         roots.map((n) =>
@@ -78,9 +110,14 @@ export async function POST(req: Request) {
     }
   }
 
+  // For a partial re-run, restrict to operations reachable downstream of
+  // `fromNode` (their upstream inputs already exist on disk from a prior run).
+  const allowed = fromNode ? downstreamIds(fromNode, dag) : null;
+
   const order = topoSort(dag);
   const specs: OperationSpec[] = order
     .filter((id) => typeOf.get(id) === "operation")
+    .filter((id) => !allowed || allowed.has(id))
     .map((id) => {
       const node = dag!.nodes.find((n) => n.id === id)!;
       const inputs = (upstream.get(id) ?? [])
@@ -100,6 +137,7 @@ export async function POST(req: Request) {
         command: node.data?.command ? String(node.data.command) : undefined,
         inputs,
         outputs,
+        subtitleStyle,
       };
     });
 
@@ -144,6 +182,25 @@ export async function POST(req: Request) {
       "cache-control": "no-store",
     },
   });
+}
+
+/** All node ids reachable downstream of `fromId` (inclusive of its consumers). */
+function downstreamIds(fromId: string, dag: GeneratedDag): Set<string> {
+  const adj = new Map<string, string[]>();
+  for (const e of dag.edges) {
+    const arr = adj.get(e.source);
+    if (arr) arr.push(e.target);
+    else adj.set(e.source, [e.target]);
+  }
+  const seen = new Set<string>();
+  const queue = [...(adj.get(fromId) ?? [])];
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const nx of adj.get(id) ?? []) queue.push(nx);
+  }
+  return seen;
 }
 
 /** Kahn's topological sort over the full node set. */

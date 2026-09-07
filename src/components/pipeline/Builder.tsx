@@ -5,12 +5,15 @@ import { Sparkles } from "lucide-react";
 import { Header } from "./Header";
 import { PipelineCanvas } from "./PipelineCanvas";
 import { SidePanel, type TraceEntry, type TraceStatus } from "./SidePanel";
-import { ResultsPanel, type PreviewItem } from "./ResultsPanel";
+import { ResultsPanel, SOURCES_TAB, type PreviewItem } from "./ResultsPanel";
+import { CanvasExportToolbar } from "./CanvasExportToolbar";
 import type { AppSettings } from "./SettingsMenu";
+import { parsePipelineFile } from "@/lib/pipelineFile";
 import { useDragResize } from "@/hooks/useDragResize";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_SAMPLE_ID,
+  SAMPLES,
   hydrateDag,
   sampleById,
   type SampleId,
@@ -28,12 +31,15 @@ interface BuilderProps {
   executionMode: string;
   model: string;
   maxUploadMb: number;
-  /** Whether the server already has a Gemini key in env (GOOGLE_API_KEY). */
+  /** Whether the server already has a Gemini key in env (GEMINI_API_KEY). */
   hasServerKey: boolean;
 }
 
 /** BYOK key persisted in this browser only. */
 const GEMINI_KEY_STORAGE = "video-agent:gemini-key";
+/** Last sample pipeline the user selected — restored on reload. */
+const SAMPLE_STORAGE = "video-agent:sample";
+const SAMPLE_IDS = new Set<string>(SAMPLES.map((s) => s.id));
 
 /** An operation's result carried by the `op-done` stream event. */
 interface OpEvent {
@@ -87,7 +93,9 @@ export function Builder({
   const [sample, setSample] = useState<SampleId>(DEFAULT_SAMPLE_ID);
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [source, setSource] = useState<LoadedSource | null>(null);
-  const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+  // Open the preview on the Sources tab by default so the first thing a user
+  // does is pick a clip (the left source-loader is hidden by default).
+  const [previewNodeId, setPreviewNodeId] = useState<string | null>(SOURCES_TAB);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   // BYOK Gemini key — hydrated from localStorage on mount (never during SSR).
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -112,9 +120,13 @@ export function Builder({
   const [settings, setSettings] = useState<AppSettings>({
     animateEdges: true,
     autoFit: true,
-    resultsLayout: "hidden",
+    // main area (node-editor convention); the preview/sources sit alongside it.
+    resultsLayout: "bottom",
     followActive: true,
-    showSourceLoader: true,
+    // Source picking lives in the preview's Sources tab, so hide the left one.
+    showSourceLoader: false,
+    // Gold (#F2C84B) subtitles by default — high-contrast on most footage.
+    subtitleStyle: "gold",
   });
 
   // Resizable dividers: side panel width, and the results pane size. The results
@@ -141,6 +153,9 @@ export function Builder({
   // most once — after that, whether it's open is the user's call (a manual close
   // is respected and never re-opened until the next run).
   const autoRevealedRef = useRef(false);
+  // Monotonic per-run token appended to produced URLs so re-runs always show the
+  // fresh artifact (the filenames are stable, so the URL alone wouldn't change).
+  const runTokenRef = useRef(0);
   const push = useCallback((e: Omit<TraceEntry, "id">) => {
     const id = nextId();
     setEntries((prev) => [...prev, { ...e, id }]);
@@ -171,14 +186,72 @@ export function Builder({
     [settings.autoFit, source],
   );
 
-  // Switch the canvas to a sample pipeline (or empty) from the settings menu.
+  // Switch the canvas to a sample pipeline (or empty) from the settings menu,
+  // and remember the choice so a page reload restores the same starting sample.
   const onSampleChange = useCallback(
     (id: SampleId) => {
       setSample(id);
       applyDag(sampleById(id));
       setEntries([]);
+      try {
+        localStorage.setItem(SAMPLE_STORAGE, id);
+      } catch {
+        /* ignore */
+      }
     },
     [applyDag],
+  );
+
+  // On mount, restore the last-selected sample from localStorage (never in SSR).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SAMPLE_STORAGE);
+      if (saved && saved !== DEFAULT_SAMPLE_ID && SAMPLE_IDS.has(saved)) {
+        setSample(saved as SampleId);
+        applyDag(sampleById(saved as SampleId));
+      }
+    } catch {
+      /* ignore */
+    }
+    // Run once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // New chat: clear the trace and reset the pipeline to the selected sample
+  // (choose "Empty canvas" as the sample to clear to a blank canvas).
+  const onNewChat = useCallback(() => {
+    setEntries([]);
+    applyDag(sampleById(sample));
+    setPreviewNodeId(SOURCES_TAB);
+    setActiveNodeId(null);
+  }, [applyDag, sample]);
+
+  // ─── Canvas import ──────────────────────────────────────────────────────
+  // Load a pipeline JSON back onto the canvas (export lives in the on-canvas
+  // toolbar, which owns its own preview dialog).
+  const importFile = useCallback(
+    async (file: File) => {
+      try {
+        const imported = parsePipelineFile(await file.text());
+        applyDag(imported);
+        setSample("empty");
+        setEntries([]);
+        push({
+          kind: "trace",
+          status: "done",
+          text: `Imported “${imported.title}” · ${imported.nodes.length} nodes`,
+        });
+      } catch (err) {
+        push({
+          kind: "trace",
+          status: "failed",
+          text: `Import failed: ${
+            err instanceof Error ? err.message : "invalid file"
+          }`,
+        });
+      }
+    },
+    [applyDag, push],
   );
 
   // A source video was chosen (sample / link / upload): bind it to the root
@@ -214,11 +287,12 @@ export function Builder({
     });
   }, [edges]);
 
-  const generate = useCallback(async () => {
-    const text = prompt.trim();
+  const generate = useCallback(
+    async (promptOverride?: string) => {
+    const text = (promptOverride ?? prompt).trim();
     if (!text || loading) return;
     push({ kind: "user", text });
-    setPrompt("");
+    if (promptOverride === undefined) setPrompt(""); // keep any typed text if a card was clicked
     setLoading(true);
     try {
       const res = await fetch("/api/generate-dag", {
@@ -293,7 +367,10 @@ export function Builder({
                 data: {
                   ...n.data,
                   status: "done" as NodeStatus,
-                  outputUrl: producedUrl.get(n.id)!,
+                  // Cache-bust per run: the filename is stable across runs, so
+                  // without a changing token the preview/editor keep a stale
+                  // (or transiently-404'd) copy instead of the fresh file.
+                  outputUrl: `${producedUrl.get(n.id)!}?t=${runTokenRef.current}`,
                 },
               };
             if (!r.ok && !r.skipped)
@@ -306,14 +383,38 @@ export function Builder({
     [edges],
   );
 
-  const run = useCallback(async () => {
+  const run = useCallback(
+    async (fromNode?: string) => {
     if (running || nodes.length === 0) return;
+    // A full run needs a source video if the pipeline has a root video resource.
+    // Don't run into a confusing all-"done" with no input — pause and point the
+    // user at the Sources tab. (A partial re-run reuses on-disk files.)
+    if (!fromNode && !source) {
+      const needsSource = nodes.some(
+        (n) =>
+          n.type === "resource" && n.data.isSource && n.data.media === "video",
+      );
+      if (needsSource) {
+        push({
+          kind: "assistant",
+          text: "Load a source video first — pick a clip in the Sources tab (right panel), or paste a link / upload one.",
+        });
+        setPreviewNodeId(SOURCES_TAB);
+        setSettings((s) =>
+          s.resultsLayout === "hidden" ? { ...s, resultsLayout: "bottom" } : s,
+        );
+        return;
+      }
+    }
     setRunning(true);
     autoRevealedRef.current = false; // allow one auto-open of the preview per run
-    // Reset operations to queued; clear prior errors.
+    runTokenRef.current += 1; // fresh cache-bust token for this run's artifacts
+    // Partial re-run: only the ops downstream of `fromNode` execute (upstream
+    // outputs already exist on disk) — so reset just those to queued.
+    const willRun = fromNode ? downstreamIds(fromNode, edges) : null;
     setNodes((prev) =>
       prev.map((n) =>
-        n.type === "operation"
+        n.type === "operation" && (!willRun || willRun.has(n.id))
           ? {
               ...n,
               data: {
@@ -351,7 +452,12 @@ export function Builder({
           "content-type": "application/json",
           ...(apiKey ? { "x-gemini-key": apiKey } : {}),
         },
-        body: JSON.stringify({ dag: liveDag, sourceUrl: source?.url ?? null }),
+        body: JSON.stringify({
+          dag: liveDag,
+          sourceUrl: source?.url ?? null,
+          subtitleStyle: settings.subtitleStyle,
+          fromNode: fromNode ?? null,
+        }),
       });
       if (!res.body) throw new Error("no response stream");
       const reader = res.body.getReader();
@@ -429,13 +535,14 @@ export function Builder({
           }
         }
       }
+      const engine = mode === "replit" ? "Replit Cloud" : "local FFmpeg";
       push({
         kind: "assistant",
         text: failed
-          ? `Ran on ${mode} — ${failed} step(s) failed. See node details.`
+          ? `Ran on ${engine} — ${failed} step(s) failed. See node details.`
           : skipped
-            ? `Ran on ${mode} — ${skipped} step(s) skipped (add GOOGLE_API_KEY for transcription).`
-            : `Ran on ${mode} — all steps done.`,
+            ? `Ran on ${engine} — ${skipped} step(s) skipped (add a Gemini API key for transcription).`
+            : `Ran on ${engine} — all steps done.`,
       });
       // Leave the viewport on the last touched stage (readable) rather than
       // shrinking back to the whole pipeline.
@@ -462,6 +569,7 @@ export function Builder({
     update,
     applyOpResult,
     settings.followActive,
+    settings.subtitleStyle,
     apiKey,
   ]);
 
@@ -505,6 +613,8 @@ export function Builder({
       onSourceLoaded={onSourceLoaded}
       onClearSource={onClearSource}
       maxUploadMb={maxUploadMb}
+      onReburn={(nodeId) => run(nodeId)}
+      running={running}
     />
   );
 
@@ -520,6 +630,9 @@ export function Builder({
         apiKey={apiKey}
         onApiKeySet={onApiKeySet}
         hasServerKey={hasServerKey}
+        onRun={() => run()}
+        running={running}
+        canRun={nodes.length > 0}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -528,13 +641,10 @@ export function Builder({
             prompt={prompt}
             onPromptChange={setPrompt}
             onGenerate={generate}
-            onRun={run}
-            onReset={() => setEntries([])}
+            onNewChat={onNewChat}
             loading={loading}
             running={running}
             entries={entries}
-            executionMode={executionMode}
-            canRun={nodes.length > 0}
             source={source}
             onSourceLoaded={onSourceLoaded}
             maxUploadMb={maxUploadMb}
@@ -571,6 +681,14 @@ export function Builder({
               refitKey={refitKey}
               onPreview={onPreview}
               activeNodeId={activeNodeId}
+            />
+
+            <CanvasExportToolbar
+              title={dag.title}
+              summary={dag.summary}
+              nodes={nodes}
+              edges={edges}
+              onImportFile={importFile}
             />
 
             {nodes.length > 0 && (
@@ -616,6 +734,25 @@ export function Builder({
       </div>
     </div>
   );
+}
+
+/** All node ids reachable downstream of `fromId` (its consumers, transitively). */
+function downstreamIds(fromId: string, edges: PipelineEdge[]): Set<string> {
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    const arr = adj.get(e.source);
+    if (arr) arr.push(e.target);
+    else adj.set(e.source, [e.target]);
+  }
+  const seen = new Set<string>();
+  const queue = [...(adj.get(fromId) ?? [])];
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const nx of adj.get(id) ?? []) queue.push(nx);
+  }
+  return seen;
 }
 
 /** Thin draggable divider between panes. */

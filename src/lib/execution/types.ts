@@ -1,5 +1,13 @@
 import type { MediaKind, OperationEngine } from "@/lib/types";
 
+/**
+ * Burned-in subtitle color (always with a black outline for contrast):
+ *   gold/white/cyan → that text color
+ *   auto            → probe the video's bottom-strip brightness; gold on dark
+ *                     footage, dark text on a white outline over bright footage
+ */
+export type SubtitleStyle = "gold" | "white" | "cyan" | "auto";
+
 /** A downstream resource an operation is expected to produce. */
 export interface OpOutput {
   /** Resource node id. */
@@ -20,6 +28,8 @@ export interface OperationSpec {
   inputs: string[];
   /** Downstream resource(s) this op produces. */
   outputs: OpOutput[];
+  /** How to color burned subtitles (burner ops only). Default "gold". */
+  subtitleStyle?: SubtitleStyle;
 }
 
 /** A produced artifact, keyed back to its resource node. */

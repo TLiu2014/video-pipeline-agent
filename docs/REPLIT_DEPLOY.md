@@ -39,8 +39,10 @@ In the Repl → **Tools → Secrets**, add:
 
 | Key              | Value                                    |
 | ---------------- | ---------------------------------------- |
-| `GOOGLE_API_KEY` | your AI Studio key (aistudio.google.com) |
+| `GEMINI_API_KEY` | your AI Studio key (aistudio.google.com) |
 | `GEMINI_MODEL`   | `gemini-3.5-flash` (optional; default)   |
+
+(`GOOGLE_API_KEY` is also accepted if you already use that name.)
 
 `EXECUTION_MODE=local`, `NEXT_TELEMETRY_DISABLED=1`, and `FFMPEG_PATH=ffmpeg` are
 already set in `.replit [env]`. **Do not** put the API key in `.replit` — it's
@@ -75,7 +77,7 @@ your Devpost submission.
 
 - [ ] Repo imported **and run via Replit Agent** (Agent session/commits kept)
 - [ ] At least one genuine change made through Agent
-- [ ] `GOOGLE_API_KEY` set in Secrets
+- [ ] `GEMINI_API_KEY` set in Secrets
 - [ ] App runs on `*.replit.dev` (dev) — prompt → build → run works end to end
 - [ ] Deployed on **Reserved VM** → `*.replit.app` URL
 - [ ] `*.replit.app` URL submitted on Devpost

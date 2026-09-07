@@ -10,14 +10,14 @@ Next app (your machine)                         Replit (cloud)
 stage source ── upload ─────────────────────▶  work/raw.mp4
 run "Audio Extractor" (ffmpeg) ── /exec ─────▶  ffmpeg … ▶ work/audio.wav
 download audio.wav  ◀── /download ───────────
-Gemini transcription  (runs LOCALLY, uses your GOOGLE_API_KEY)
+Gemini transcription  (runs LOCALLY, uses your GEMINI_API_KEY)
 upload subs.en.srt ── /upload ──────────────▶  work/subs.en.srt
 run "Subtitle Burner" (ffmpeg) ── /exec ─────▶  ffmpeg … ▶ work/subtitled.mp4
 download subtitled.mp4 ◀── /download ─────────  (preview in the app)
 ```
 
 > **Only FFmpeg runs on Replit.** Gemini calls (transcription, reframe analysis)
-> run on your Next server, so `GOOGLE_API_KEY` never leaves your machine.
+> run on your Next server, so `GEMINI_API_KEY` never leaves your machine.
 
 The executor code is in [`deploy/replit-executor/`](../deploy/replit-executor).
 
@@ -80,7 +80,7 @@ REPLIT_EXECUTOR_URL=https://YOUR-REPL-URL
 REPLIT_EXECUTOR_TOKEN=the-same-EXECUTOR_TOKEN-value
 
 # Gemini still runs locally — keep this set for real subtitles / smart reframe:
-GOOGLE_API_KEY=your-key
+GEMINI_API_KEY=your-key
 ```
 
 Restart the app (`pnpm dev` or `pnpm build && pnpm start`). The side panel's

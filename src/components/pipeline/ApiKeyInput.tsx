@@ -9,7 +9,7 @@ interface Props {
   onApiKeySet: (apiKey: string) => void;
   /** The key currently stored in the browser (null = none). */
   currentApiKey: string | null;
-  /** Whether the server already has a key in env (GOOGLE_API_KEY). */
+  /** Whether the server already has a key in env (GEMINI_API_KEY). */
   hasServerKey?: boolean;
 }
 

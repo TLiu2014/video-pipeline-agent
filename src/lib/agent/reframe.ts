@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { LlmAgent, InMemoryRunner } from "@google/adk";
 import { geminiModelParam, hasApiKey } from "./dagBuilder";
+import { runToText } from "./adkRun";
 
 export interface CropPlan {
   /** Horizontal center of the subject, 0 (far left) … 1 (far right). */
@@ -26,7 +27,7 @@ const MAX_INLINE_BYTES = 18 * 1024 * 1024;
  * of blindly cropping the middle. Throws if no key / video too large.
  */
 export async function analyzeReframe(absVideoPath: string): Promise<CropPlan> {
-  if (!hasApiKey()) throw new Error("no GOOGLE_API_KEY configured");
+  if (!hasApiKey()) throw new Error("no Gemini API key configured");
   const bytes = await readFile(absVideoPath);
   if (bytes.length > MAX_INLINE_BYTES) {
     throw new Error(
@@ -42,7 +43,8 @@ export async function analyzeReframe(absVideoPath: string): Promise<CropPlan> {
     name: "reframe_analyzer",
     model: geminiModelParam(),
     description: "Finds the main subject's horizontal position for reframing.",
-    instruction: `You are reframing a 16:9 video into a 9:16 vertical short. Watch the clip and locate the MAIN SUBJECT (the speaker / person / focal action).
+    // Function form so the ADK skips {var} state-injection (JSON braces below).
+    instruction: () => `You are reframing a 16:9 video into a 9:16 vertical short. Watch the clip and locate the MAIN SUBJECT (the speaker / person / focal action).
 Return JSON ONLY:
 { "focalX": <number 0..1>, "reason": "<short>" }
 - focalX is the subject's horizontal center across the clip: 0 = far left, 0.5 = centered, 1 = far right.
@@ -52,27 +54,19 @@ Output ONLY the JSON object.`,
     generateContentConfig: {
       responseMimeType: "application/json",
       temperature: 0.2,
+      // Off: thinking can eat the output budget and return an empty result.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
   const runner = new InMemoryRunner({ agent, appName: "video-pipeline-agent" });
-  let raw = "";
-  for await (const event of runner.runEphemeral({
-    userId: "reframer",
-    newMessage: {
-      role: "user",
-      parts: [
-        { text: "Where is the main subject horizontally? Reframe to 9:16." },
-        { inlineData: { mimeType, data: bytes.toString("base64") } },
-      ],
-    },
-  })) {
-    for (const p of event.content?.parts ?? []) {
-      if (typeof p.text === "string") raw += p.text;
-    }
-  }
-
-  raw = raw.trim();
+  const raw = await runToText(runner, "reframer", {
+    role: "user",
+    parts: [
+      { text: "Where is the main subject horizontally? Reframe to 9:16." },
+      { inlineData: { mimeType, data: bytes.toString("base64") } },
+    ],
+  });
   if (!raw) throw new Error("reframe analysis returned empty");
   const parsed = JSON.parse(unwrap(raw)) as Partial<CropPlan>;
   let focalX = Number(parsed.focalX);

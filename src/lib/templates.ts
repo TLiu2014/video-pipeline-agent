@@ -11,11 +11,6 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
       "Subtitle this video in English and Simplified Chinese simultaneously, then burn both tracks into the frame.",
   },
   {
-    label: "Dub to Chinese",
-    prompt:
-      "Transcribe the audio, translate it to Simplified Chinese, generate a natural Chinese voice-over, and replace the original audio track.",
-  },
-  {
     label: "Vertical for Reels",
     prompt:
       "Crop this landscape video to a 9:16 vertical aspect ratio for Instagram Reels and add auto-captions.",
