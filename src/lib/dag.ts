@@ -218,8 +218,8 @@ export const SAMPLES: SampleOption[] = [
   { id: "empty", label: "Empty canvas", dag: EMPTY_DAG },
 ];
 
-/** Current default sample shown on first load. */
-export const DEFAULT_SAMPLE_ID: SampleId = "subtitle";
+/** Current default shown on first load — a blank canvas (user starts by prompting). */
+export const DEFAULT_SAMPLE_ID: SampleId = "empty";
 
 export function sampleById(id: SampleId): GeneratedDag {
   return SAMPLES.find((s) => s.id === id)?.dag ?? SAMPLE_DAG;

@@ -29,4 +29,9 @@ externalPort = 80
 [deployment]
 deploymentTarget = "gce"
 build = ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm build"]
-run = ["sh", "-c", "pnpm start:replit"]
+# Start Next directly via its binary — NOT `pnpm start:replit`. corepack/pnpm is
+# only enabled in the build phase; on the GCE run phase the pnpm shim isn't on
+# PATH, so `pnpm ...` fails instantly → no port opens → deploy fails at Promote
+# ("didn't open a port in time"). Bind 0.0.0.0 and Replit's injected $PORT (falls
+# back to 3000 = localPort) so the health check sees a listener immediately.
+run = ["sh", "-c", "./node_modules/.bin/next start -H 0.0.0.0 -p ${PORT:-3000}"]
