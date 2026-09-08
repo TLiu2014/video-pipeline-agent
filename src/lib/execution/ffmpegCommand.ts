@@ -27,18 +27,33 @@ export function subtitleBurnCommand(
   outFile: string,
   styleFragment: string = subtitleStyleFragment("gold", null),
   fontSize?: number,
+  fontName: string | undefined = subtitleFont(),
 ): string {
   const BOTTOM = 2; // legacy SSA bottom-center
   const BASE_MARGIN = 36; // px from the bottom for the lowest track
   const LINE_STEP = 54; // extra px per stacked track above it
   const size = fontSize ? `,FontSize=${fontSize}` : "";
+  // Force the font family so non-Latin scripts (e.g. Chinese) render with a font
+  // that actually has the glyphs. Hosts without a CJK system font (Replit's Nix
+  // container) otherwise fall back to fontconfig's default and draw .notdef tofu
+  // boxes. Empty → let libass pick the default (macOS ships a CJK font).
+  const font = fontName ? `,FontName=${fontName}` : "";
   const chain = srtFiles
     .map((srt, i) => {
       const marginV = BASE_MARGIN + i * LINE_STEP;
-      return `subtitles=${srt}:force_style='Alignment=${BOTTOM},MarginV=${marginV}${size},${styleFragment}'`;
+      return `subtitles=${srt}:force_style='Alignment=${BOTTOM},MarginV=${marginV}${size}${font},${styleFragment}'`;
     })
     .join(",");
   return `${ffmpegBin} -nostdin -y -i ${quote(videoFile)} -vf "${chain}" ${quote(outFile)}`;
+}
+
+/**
+ * Subtitle font family to force in the burn, from `SUBTITLE_FONT`. Set it on
+ * hosts whose default fontconfig font lacks CJK glyphs (Replit → "Noto Sans CJK
+ * SC", installed via replit.nix). Unset locally, where the OS default covers it.
+ */
+export function subtitleFont(): string | undefined {
+  return process.env.SUBTITLE_FONT?.trim() || undefined;
 }
 
 // ASS colours are &HAABBGGRR (alpha, blue, green, red).

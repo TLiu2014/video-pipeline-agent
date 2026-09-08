@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 /**
  * Per-request BYOK context. A browser can send its own Gemini key with each
@@ -44,12 +47,36 @@ function envApiKey(): string | undefined {
   return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || undefined;
 }
 
+/**
+ * On hosts without gcloud/ADC (Replit), the service-account key arrives as a
+ * secret STRING in GOOGLE_APPLICATION_CREDENTIALS_JSON, but Google's auth
+ * library only reads a FILE at GOOGLE_APPLICATION_CREDENTIALS. Materialize the
+ * JSON to a temp file once and point ADC at it. (Local dev already has ADC from
+ * `gcloud auth application-default login`, so this is a no-op there.)
+ */
+let vertexCredsReady = false;
+function ensureVertexCredentials(): void {
+  if (vertexCredsReady) return;
+  vertexCredsReady = true;
+  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON?.trim();
+  const existing = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!json || (existing && existsSync(existing))) return;
+  try {
+    const file = path.join(tmpdir(), "cinedag-gcp-sa.json");
+    writeFileSync(file, json, { mode: 0o600 });
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = file;
+  } catch (err) {
+    console.error("[vertex] failed to materialize credentials:", err);
+  }
+}
+
 /** Whether Vertex AI is enabled + has a project (ADC-based, no key). */
 function vertexConfig(): { project: string; location: string } | null {
   if (
     process.env.GOOGLE_GENAI_USE_VERTEXAI === "true" &&
     process.env.GOOGLE_CLOUD_PROJECT
   ) {
+    ensureVertexCredentials();
     return {
       project: process.env.GOOGLE_CLOUD_PROJECT,
       location: process.env.GOOGLE_CLOUD_LOCATION || "us-central1",

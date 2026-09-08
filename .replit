@@ -14,6 +14,9 @@ channel = "stable-24_05"
 EXECUTION_MODE = "local"
 NEXT_TELEMETRY_DISABLED = "1"
 FFMPEG_PATH = "ffmpeg"
+# Force the CJK font (from replit.nix) in subtitle burns so Chinese renders as
+# glyphs, not tofu boxes. Unset locally, where the OS default already has CJK.
+SUBTITLE_FONT = "Noto Sans CJK SC"
 # GOOGLE_API_KEY and GEMINI_MODEL go in Replit *Secrets*, not here.
 
 [[ports]]

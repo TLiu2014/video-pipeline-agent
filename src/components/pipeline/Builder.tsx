@@ -435,7 +435,6 @@ export function Builder({
     let failed = 0;
     let skipped = 0;
     let lastOpId: string | null = null;
-    let mode = executionMode;
     try {
       // Send the LIVE nodes (with the loaded source's real filename), not the
       // static sample DAG — so execution reads/writes the actual filenames.
@@ -481,9 +480,7 @@ export function Builder({
           } catch {
             continue;
           }
-          if (ev.type === "start") {
-            mode = ev.mode;
-          } else if (ev.type === "op-start") {
+          if (ev.type === "op-start") {
             if (settings.followActive) setActiveNodeId(ev.id);
             setNodes((prev) =>
               prev.map((n) =>
@@ -538,14 +535,13 @@ export function Builder({
           }
         }
       }
-      const engine = mode === "replit" ? "Replit Cloud" : "local FFmpeg";
       push({
         kind: "assistant",
         text: failed
-          ? `Ran on ${engine} — ${failed} step(s) failed. See node details.`
+          ? `Ran — ${failed} step(s) failed. See node details.`
           : skipped
-            ? `Ran on ${engine} — ${skipped} step(s) skipped (add a Gemini API key for transcription).`
-            : `Ran on ${engine} — all steps done.`,
+            ? `Ran — ${skipped} step(s) skipped (add a Gemini API key for transcription).`
+            : `Ran — all steps done.`,
       });
       // Leave the viewport on the last touched stage (readable) rather than
       // shrinking back to the whole pipeline.

@@ -64,12 +64,14 @@ export function Header({
           )}
           {running ? "Running…" : "Run"}
         </button>
+        {/* Execution-engine label next to Run (hidden for now, kept for later):
         <span className="mr-1 hidden text-[11px] text-slate-400 sm:inline">
           on{" "}
           <span className="font-medium text-slate-500 dark:text-slate-300">
             {engineLabel}
           </span>
         </span>
+        */}
         <ThemeToggle />
         <SettingsMenu
           settings={settings}
