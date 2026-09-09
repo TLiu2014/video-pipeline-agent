@@ -17,8 +17,7 @@ import { CineDagTile } from "@/components/brand/CineDagMark";
 import { SectionHeading, SiteFooter, SiteNav } from "./SiteChrome";
 import { PipelineDiagram } from "./diagrams";
 
-// TODO: replace with the real 3-minute demo video once recorded.
-const DEMO_VIDEO_URL = "#demo";
+const DEMO_VIDEO_URL = "https://youtu.be/tg5KCGneYFc";
 
 const FEATURES = [
   {
@@ -121,6 +120,8 @@ export default function LandingPage() {
             </Link>
             <a
               href={DEMO_VIDEO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-6 py-3 text-base font-medium text-indigo-700 transition-colors hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300 dark:hover:bg-indigo-500/20"
             >
               <PlayCircle className="h-4 w-4" />

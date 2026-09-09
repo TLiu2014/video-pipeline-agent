@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowUp,
   Captions,
+  ChevronDown,
   Cpu,
   FileVideo,
   Film,
@@ -13,6 +14,7 @@ import {
   Sparkles,
   Upload,
   Workflow,
+  X,
 } from "lucide-react";
 import { GITHUB_URL, SectionHeading, SiteFooter, SiteNav } from "./SiteChrome";
 import { ArchitectureDiagram, PipelineDiagram } from "./diagrams";
@@ -66,6 +68,70 @@ function BackToTop() {
     >
       <ArrowUp className="h-4 w-4" />
     </button>
+  );
+}
+
+/**
+ * Collapsed-by-default full architecture render (public/architecture.png, the
+ * export of docs/architecture.mmd). Click the summary to expand; click the image
+ * to open it full-screen; click anywhere (or ✕) to close.
+ */
+function FullArchitectureImage() {
+  const [zoomed, setZoomed] = useState(false);
+  return (
+    <>
+      <details className="group mt-6 rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/40">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-200">
+          <span className="inline-flex items-center gap-2">
+            <Workflow className="h-4 w-4 text-indigo-500" />
+            Full system diagram
+          </span>
+          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-slate-200 p-4 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => setZoomed(true)}
+            title="Click to view full size"
+            className="block w-full cursor-zoom-in overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/architecture.png"
+              alt="CineDAG full architecture diagram"
+              className="w-full"
+            />
+          </button>
+          <p className="mt-2 text-xs text-slate-400">
+            Click the image to view it full size.
+          </p>
+        </div>
+      </details>
+
+      {zoomed && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setZoomed(false)}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+        >
+          <button
+            type="button"
+            aria-label="Close full-size diagram"
+            onClick={() => setZoomed(false)}
+            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/architecture.png"
+            alt="CineDAG full architecture diagram"
+            className="max-h-[95vh] max-w-[95vw] cursor-zoom-out rounded-lg object-contain shadow-2xl"
+          />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -132,6 +198,7 @@ export default function DocsPage() {
                   <Code>GEMINI_API_KEY</Code> never leaves your machine.
                 </p>
               </Prose>
+              <FullArchitectureImage />
             </section>
 
             {/* Build */}

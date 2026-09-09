@@ -1,0 +1,46 @@
+%% CineDAG — total architecture (single diagram)
+%% Render: npx @mermaid-js/mermaid-cli -i docs/architecture.mmd -o docs/architecture.svg
+flowchart TB
+    UI["Browser · Builder<br/>chat · React Flow canvas · preview player"]
+
+    subgraph server["Next.js server (Node runtime)"]
+        direction LR
+        GEN["/api/generate-dag"]
+        EXE["/api/execute · SSE"]
+        MEDIA["media routes<br/>sources · fetch · upload · file/*"]
+    end
+
+    BUILDER["ADK DAG-builder agent"]
+
+    subgraph exec["Execution · ExecutorService — EXECUTION_MODE"]
+        direction LR
+        LOCAL["LocalFfmpegRunner<br/>child_process"]
+        REPLIT["ReplitCloudRunner<br/>remote HTTP"]
+    end
+
+    OPS["Gemini ops<br/>transcribe · translate · reframe"]
+    FFMPEG["FFmpeg + libass"]
+    GEMINI["Gemini<br/>BYOK · Vertex AI (ADC) · env key"]
+    STORE["Media store<br/>MEDIA_DIR · RENDERS_DIR"]
+
+    %% build path
+    UI -->|prompt| GEN
+    GEN --> BUILDER
+    BUILDER --> GEMINI
+    BUILDER -->|pipeline JSON| UI
+
+    %% run path
+    UI -->|Run| EXE
+    EXE -->|topo-sort into specs| LOCAL
+    EXE --> REPLIT
+    LOCAL --> FFMPEG
+    REPLIT --> FFMPEG
+    LOCAL --> OPS
+    OPS --> GEMINI
+
+    %% media + preview
+    UI --> MEDIA
+    MEDIA --> STORE
+    FFMPEG --> STORE
+    OPS --> STORE
+    STORE -->|preview| UI

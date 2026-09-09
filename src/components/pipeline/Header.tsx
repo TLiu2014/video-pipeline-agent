@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Loader2, Play } from "lucide-react";
 import { CineDagTile } from "@/components/brand/CineDagMark";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -40,13 +41,17 @@ export function Header({
   const engineLabel = executionMode === "replit" ? "Replit Cloud" : "Local FFmpeg";
   return (
     <header className="z-20 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-2.5 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
-      {/* Brand */}
-      <div className="flex items-center gap-2">
+      {/* Brand — links back to the landing page (matches the docs header). */}
+      <Link
+        href="/"
+        aria-label="CineDAG home"
+        className="flex items-center gap-2 rounded-lg transition-opacity hover:opacity-80"
+      >
         <CineDagTile size={34} />
         <div className="text-base font-semibold leading-none text-slate-900 dark:text-slate-100">
           Cine<span className="text-indigo-500">DAG</span>
         </div>
-      </div>
+      </Link>
 
       {/* Right cluster */}
       <div className="flex items-center gap-2">
